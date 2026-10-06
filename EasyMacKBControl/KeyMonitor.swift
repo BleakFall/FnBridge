@@ -3,107 +3,6 @@ import OSLog
 
 private let log = Logger(subsystem: "EasyMacKBControl", category: "KeyMonitor")
 
-// MARK: - F 区功能定义
-
-/// 原生妙控键盘 F 区（F1–F12）对应的系统功能。
-///
-/// 注意：苹果原装键盘的 F 区在“不按 Fn”时发出的是系统私有 HID usage（不经过事件流），
-/// 本 App 无法也不应拦截；本 App 处理的是外接键盘（如 HHKB 的 Fn+数字）发出的
-/// **标准 F 键码**，把它们转换成等价的系统功能。
-enum FKeyAction: String, CaseIterable, Identifiable {
-    case brightnessDown  // F1
-    case brightnessUp    // F2
-    case missionControl  // F3
-    case spotlight       // F4
-    case dictation       // F5
-    case focus           // F6
-    case previousTrack   // F7
-    case playPause       // F8
-    case nextTrack       // F9
-    case mute            // F10
-    case volumeDown      // F11
-    case volumeUp        // F12
-
-    var id: String { rawValue }
-
-    /// 对应的 macOS 虚拟键码（Carbon kVK_* 常量值）。
-    var keyCode: CGKeyCode {
-        switch self {
-        case .brightnessDown: return 122   // kVK_F1
-        case .brightnessUp:   return 120   // kVK_F2
-        case .missionControl: return 99    // kVK_F3
-        case .spotlight:      return 118   // kVK_F4
-        case .dictation:      return 96    // kVK_F5
-        case .focus:          return 97    // kVK_F6
-        case .previousTrack:  return 98    // kVK_F7
-        case .playPause:      return 100   // kVK_F8
-        case .nextTrack:      return 101   // kVK_F9
-        case .mute:           return 109   // kVK_F10
-        case .volumeDown:     return 103   // kVK_F11
-        case .volumeUp:       return 111   // kVK_F12
-        }
-    }
-
-    /// 键名（如 "F1"）。
-    var keyLabel: String {
-        switch self {
-        case .brightnessDown: return "F1"
-        case .brightnessUp:   return "F2"
-        case .missionControl: return "F3"
-        case .spotlight:      return "F4"
-        case .dictation:      return "F5"
-        case .focus:          return "F6"
-        case .previousTrack:  return "F7"
-        case .playPause:      return "F8"
-        case .nextTrack:      return "F9"
-        case .mute:           return "F10"
-        case .volumeDown:     return "F11"
-        case .volumeUp:       return "F12"
-        }
-    }
-
-    /// 中文描述。
-    var title: String {
-        switch self {
-        case .brightnessDown: return "降低屏幕亮度"
-        case .brightnessUp:   return "提高屏幕亮度"
-        case .missionControl: return "调度中心（Mission Control）"
-        case .spotlight:      return "聚焦搜索（Spotlight）"
-        case .dictation:      return "听写"
-        case .focus:          return "专注模式 / 勿扰"
-        case .previousTrack:  return "上一曲"
-        case .playPause:      return "播放 / 暂停"
-        case .nextTrack:      return "下一曲"
-        case .mute:           return "静音"
-        case .volumeDown:     return "降低音量"
-        case .volumeUp:       return "提高音量"
-        }
-    }
-
-    /// 该功能当前能否可靠触发。
-    /// 听写 / 专注模式 macOS 没有公开的编程接口，暂不支持（保持普通 F 键）。
-    var supported: Bool {
-        self != .dictation && self != .focus
-    }
-
-    /// 按住不放时是否允许自动重复触发（亮度 / 音量 / 媒体键适合重复）。
-    var isRepeatable: Bool {
-        switch self {
-        case .brightnessDown, .brightnessUp,
-             .previousTrack, .playPause, .nextTrack,
-             .mute, .volumeDown, .volumeUp:
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// 默认启用的动作（排除暂不支持的听写 / 专注）。
-    static var defaultEnabled: Set<FKeyAction> {
-        Set(allCases.filter { $0.supported })
-    }
-}
-
 // MARK: - 系统事件发送
 
 /// 系统定义事件中的“辅助控制键”码（即 IOKit 的 NX_KEYTYPE_* 常量）。
@@ -171,8 +70,6 @@ private func postSpotlight() {
 final class KeyMonitor {
     static let shared = KeyMonitor()
 
-    private static let defaultsKey = "enabledFKeyActions"
-
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private(set) var isRunning = false
@@ -230,44 +127,14 @@ final class KeyMonitor {
         log.info("事件钩子已停止")
     }
 
-    // MARK: 启用状态（持久化到 UserDefaults）
-
-    var enabledActions: Set<FKeyAction> {
-        get {
-            guard let raw = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) else {
-                return FKeyAction.defaultEnabled
-            }
-            return Set(raw.compactMap { FKeyAction(rawValue: $0) })
-        }
-        set {
-            UserDefaults.standard.set(newValue.map { $0.rawValue }.sorted(), forKey: Self.defaultsKey)
-        }
-    }
-
-    func isEnabled(_ action: FKeyAction) -> Bool {
-        enabledActions.contains(action)
-    }
-
-    func setEnabled(_ action: FKeyAction, enabled: Bool) {
-        var set = enabledActions
-        if enabled {
-            set.insert(action)
-        } else {
-            set.remove(action)
-        }
-        enabledActions = set
-    }
-
-    func resetToDefaults() {
-        UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
-    }
+    // MARK: 启用状态（存取已抽取到 Core/FKeySettings.swift）
 
     /// 根据键码找到“已启用”的动作；未启用或非 F 键返回 nil。
     private func action(forKeyCode keyCode: CGKeyCode) -> FKeyAction? {
         guard let action = FKeyAction.allCases.first(where: { $0.keyCode == keyCode }) else {
             return nil
         }
-        return isEnabled(action) ? action : nil
+        return FKeySettings().enabled.contains(action) ? action : nil
     }
 
     // MARK: 事件回调（在主 RunLoop 线程）

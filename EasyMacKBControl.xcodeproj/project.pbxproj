@@ -24,6 +24,22 @@
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000260 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000 /* EasyMacKBControl */;
+			remoteInfo = EasyMacKBControl;
+		};
+/* End PBXContainerItemProxy section */
+/* Begin PBXTargetDependency section */
+		000000000000000000000261 /* EasyMacKBControl */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* EasyMacKBControl */;
+			targetProxy = 000000000000000000000260 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 /* Begin PBXFrameworksBuildPhase section */
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -90,6 +106,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				000000000000000000000261 /* EasyMacKBControl */,
 			);
 			fileSystemSynchronizedGroups = (
 				000000000000000000000210 /* EasyMacKBControlTests */,

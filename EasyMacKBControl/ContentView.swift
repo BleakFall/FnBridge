@@ -71,7 +71,10 @@ struct ContentView: View {
                 Text("F 区功能映射")
                     .font(.headline)
                 Spacer()
-                Button("恢复默认") { KeyMonitor.shared.resetToDefaults() }
+                Button("恢复默认") {
+                    var settings = FKeySettings()
+                    settings.resetToDefaults()
+                }
                     .controlSize(.small)
             }
 
@@ -118,8 +121,11 @@ struct ContentView: View {
 
     private func binding(for action: FKeyAction) -> Binding<Bool> {
         Binding(
-            get: { KeyMonitor.shared.isEnabled(action) },
-            set: { KeyMonitor.shared.setEnabled(action, enabled: $0) }
+            get: { FKeySettings().enabled.contains(action) },
+            set: { on in
+                var settings = FKeySettings()
+                settings.setEnabled(action, on)
+            }
         )
     }
 
