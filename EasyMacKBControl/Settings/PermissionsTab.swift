@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import SwiftUI
@@ -74,13 +75,26 @@ struct PermissionsTab: View {
     }
 
     private func requestListenAccess() {
-        _ = CGRequestListenEventAccess()
+        if !CGRequestListenEventAccess() {
+            openPrivacyPane("Privacy_ListenEvent")
+        }
         refresh()
     }
 
     private func requestPostAccess() {
-        _ = CGRequestPostEventAccess()
+        if !CGRequestPostEventAccess() {
+            openPrivacyPane("Privacy_Accessibility")
+        }
         refresh()
+    }
+
+    /// 打开"隐私与安全性"里对应的权限面板，让用户手动勾选本 App。
+    /// CGRequest* 首次可弹内联提示，但从 Xcode / 未装到 /Applications 时经常静默失败，
+    /// 所以请求仍未授权时直接跳到系统设置面板兜底。
+    private func openPrivacyPane(_ anchor: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func toggleTap() {
