@@ -1,11 +1,11 @@
-# EasyMacKBControl v2 设计文档
+# FnBridge v2 设计文档
 
 日期:2026-10-06
-状态:已通过用户评审(形态=可切换;Bundle ID=com.daixingwen.easymackbcontrol;许可证=MIT)
+状态:已通过用户评审(形态=可切换;Bundle ID=com.daixingwen.fnbridge;许可证=MIT)
 
 ## 1. 背景与目标
 
-EasyMacKBControl 把外接键盘(如 HHKB 的 Fn+数字)发出的标准 F1–F12 键码转换成妙控键盘 F 区等价的系统功能(亮度、调度中心、Spotlight、媒体、音量)。F1–F12 的映射与逐键开关在 v1 已实现并实测可用。
+FnBridge 把外接键盘(如 HHKB 的 Fn+数字)发出的标准 F1–F12 键码转换成妙控键盘 F 区等价的系统功能(亮度、调度中心、Spotlight、媒体、音量)。F1–F12 的映射与逐键开关在 v1 已实现并实测可用。
 
 v2 的目标:把它从"能用的原型"升级为**可发布给社区的完整产品**:
 
@@ -39,7 +39,7 @@ v2 的目标:把它从"能用的原型"升级为**可发布给社区的完整产
 |---|---|
 | 运行形态 | 可切换:默认菜单栏应用(无 Dock 图标),设置内提供"在程序坞显示"开关 |
 | 状态栏图标 | 设置内提供"在状态栏显示图标"开关 |
-| Bundle ID | `com.daixingwen.easymackbcontrol`(定死,不再变更) |
+| Bundle ID | `com.daixingwen.fnbridge`(定死,不再变更) |
 | 部署目标 | macOS 13.0 Ventura(全部所需 API 的最低交集) |
 | 许可证 | MIT |
 | 语言 | 简体中文 + English |
@@ -49,9 +49,9 @@ v2 的目标:把它从"能用的原型"升级为**可发布给社区的完整产
 ### 4.1 代码结构
 
 ```
-EasyMacKBControl/
+FnBridge/
 ├── App/
-│   ├── EasyMacKBControlApp.swift   @main,注入 AppDelegate
+│   ├── FnBridgeApp.swift   @main,注入 AppDelegate
 │   └── AppDelegate.swift           NSApplicationDelegate:生命周期、reopen 恢复、形态切换
 ├── Core/
 │   ├── FKeyAction.swift            F 键定义(枚举,纯数据,可单测)
@@ -97,7 +97,7 @@ EasyMacKBControl/
 打开设置…
 开机自启               (子项开关,与通用 Tab 同步)
 ─────────────
-退出 EasyMacKBControl ⌘Q
+退出 FnBridge ⌘Q
 ```
 
 ## 5. 设置界面
@@ -115,7 +115,7 @@ TabView 三页替代现有单屏,窗口标题"设置",约 560×640 可调:
 | 1 | tap 被系统超时禁用后静默死亡 | 回调中处理 `.tapDisabledByTimeout` → `CGEventTapEnable` 重启;`.tapDisabledByUserInput` → 更新状态供 UI 提示 |
 | 2 | F5/F6 残留启用状态导致死键 | `isInterceptable = supported && isEnabled`;不支持的键永不拦截 |
 | 3 | 0.12s 全局节流吞掉快速连按 | 节流改为每键独立:`[FKeyAction: TimeInterval]` 字典按 action 记录 lastFire,互不影响 |
-| 4 | Bundle ID 占位符 | 改为 `com.daixingwen.easymackbcontrol` |
+| 4 | Bundle ID 占位符 | 改为 `com.daixingwen.fnbridge` |
 | 5 | 部署目标 27.0 | 降到 13.0 |
 | 6 | 全键盘拦截行为未说明 | README + 按键映射页底部说明 |
 
