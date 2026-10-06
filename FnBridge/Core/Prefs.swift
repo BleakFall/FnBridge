@@ -26,5 +26,5 @@ enum Prefs {
 
 extension Notification.Name {
     /// 请求打开设置窗口(Task 8 的 App 入口监听此通知)。
-    static let openSettings = Notification.Name("EasyMacKBControl.openSettings")
+    static let openSettings = Notification.Name("FnBridge.openSettings")
 }

@@ -1,5 +1,5 @@
 import XCTest
-@testable import EasyMacKBControl
+@testable import FnBridge
 
 final class SmokeTests: XCTestCase {
     func testFKeyActionHasTwelveCases() {

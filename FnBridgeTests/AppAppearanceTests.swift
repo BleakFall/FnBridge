@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import EasyMacKBControl
+@testable import FnBridge
 
 final class AppAppearanceTests: XCTestCase {
     func testActivationPolicyMapping() {

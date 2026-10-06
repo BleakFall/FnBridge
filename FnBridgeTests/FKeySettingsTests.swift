@@ -1,5 +1,5 @@
 import XCTest
-@testable import EasyMacKBControl
+@testable import FnBridge
 
 final class FKeySettingsTests: XCTestCase {
     private var suite: UserDefaults!

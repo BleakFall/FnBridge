@@ -1,7 +1,7 @@
 import AppKit
 import OSLog
 
-private let log = Logger(subsystem: "EasyMacKBControl", category: "MenuBar")
+private let log = Logger(subsystem: "FnBridge", category: "MenuBar")
 
 /// 状态栏图标与菜单。菜单在每次展开时重建(menuNeedsUpdate),保证权限/开关状态实时。
 final class MenuBarController: NSObject {
@@ -115,7 +115,7 @@ extension MenuBarController: NSMenuDelegate {
         menu.addItem(login)
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: String(localized: "退出 EasyMacKBControl"),
+        let quitItem = NSMenuItem(title: String(localized: "退出 FnBridge"),
                                   action: #selector(quit),
                                   keyEquivalent: "q")
         quitItem.target = self

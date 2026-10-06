@@ -1,7 +1,7 @@
 import Cocoa
 import OSLog
 
-private let log = Logger(subsystem: "EasyMacKBControl", category: "SystemEventPoster")
+private let log = Logger(subsystem: "FnBridge", category: "SystemEventPoster")
 
 /// 系统事件发送层:把 FKeyAction 转成等价的系统功能。
 /// 发送副作用集中在此,纯数据(auxEventData1 / auxKeyByAction)可单测。

@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import CoreGraphics
 import XCTest
-@testable import EasyMacKBControl
+@testable import FnBridge
 
 final class KeyMonitorTests: XCTestCase {
     private var suite: UserDefaults!

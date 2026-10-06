@@ -813,18 +813,18 @@
         }
       }
     },
-    "退出 EasyMacKBControl" : {
+    "退出 FnBridge" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Quit EasyMacKBControl"
+            "value" : "Quit FnBridge"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "退出 EasyMacKBControl"
+            "value" : "退出 FnBridge"
           }
         }
       }

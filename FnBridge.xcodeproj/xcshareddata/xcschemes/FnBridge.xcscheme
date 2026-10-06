@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "000000000000000100000000"
-               BuildableName = "EasyMacKBControl.app"
-               BlueprintName = "EasyMacKBControl"
-               ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+               BuildableName = "FnBridge.app"
+               BlueprintName = "FnBridge"
+               ReferencedContainer = "container:FnBridge.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -34,9 +34,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "000000000000000000000200"
-               BuildableName = "EasyMacKBControlTests.xctest"
-               BlueprintName = "EasyMacKBControlTests"
-               ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+               BuildableName = "FnBridgeTests.xctest"
+               BlueprintName = "FnBridgeTests"
+               ReferencedContainer = "container:FnBridge.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -56,9 +56,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000100000000"
-            BuildableName = "EasyMacKBControl.app"
-            BlueprintName = "EasyMacKBControl"
-            ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+            BuildableName = "FnBridge.app"
+            BlueprintName = "FnBridge"
+            ReferencedContainer = "container:FnBridge.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>

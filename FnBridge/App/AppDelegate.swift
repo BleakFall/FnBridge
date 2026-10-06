@@ -2,7 +2,7 @@ import AppKit
 import OSLog
 import SwiftUI
 
-private let log = Logger(subsystem: "EasyMacKBControl", category: "AppDelegate")
+private let log = Logger(subsystem: "FnBridge", category: "AppDelegate")
 
 /// 生命周期:启动即工作(不依赖窗口)、关窗不退出、重新打开找回设置。
 ///
@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.isReleasedWhenClosed = false  // 关窗后对象仍存活,可复用
-        window.title = "EasyMacKBControl"
+        window.title = "FnBridge"
         window.contentView = NSHostingView(rootView: SettingsView())
         window.center()
         settingsWindow = window

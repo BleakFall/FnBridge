@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 EasyMacKBControl 的 App 图标与状态栏模板图。
+"""生成 FnBridge 的 App 图标与状态栏模板图。
 
 用法:tools/.venv/bin/python tools/make_icons.py
 设计:深蓝紫渐变底 + 白色键帽 + "F" 字样(macOS Big Sur+ 圆角矩形规范)。
@@ -10,7 +10,7 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-ASSETS = ROOT / "EasyMacKBControl" / "Assets.xcassets"
+ASSETS = ROOT / "FnBridge" / "Assets.xcassets"
 
 # 配色
 BG_TOP = (94, 92, 230)      # 亮靛蓝 #5E5CE6

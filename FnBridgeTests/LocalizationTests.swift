@@ -1,5 +1,5 @@
 import XCTest
-@testable import EasyMacKBControl
+@testable import FnBridge
 
 final class LocalizationTests: XCTestCase {
     /// 读取指定语言 lproj 里的翻译（不依赖进程 locale，可靠、可复现）。
@@ -18,7 +18,7 @@ final class LocalizationTests: XCTestCase {
     /// 菜单栏与设置界面字符串必须有英文翻译（防回归：删翻译会导致失败）。
     func testEnglishTranslationsExist() {
         let keys = [
-            "启用 F 键转换", "打开设置…", "开机自启", "退出 EasyMacKBControl",
+            "启用 F 键转换", "打开设置…", "开机自启", "退出 FnBridge",
             "✓ 运行中", "⚠️ 缺少权限,点击前往系统设置", "⚠️ 监听未启动",
             "通用", "按键映射", "权限与诊断",
             "输入监控:已授权", "输入监控:未授权",

@@ -1,7 +1,7 @@
 import Cocoa
 import OSLog
 
-private let log = Logger(subsystem: "EasyMacKBControl", category: "KeyMonitor")
+private let log = Logger(subsystem: "FnBridge", category: "KeyMonitor")
 
 // MARK: - 监听器
 

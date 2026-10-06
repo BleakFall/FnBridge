@@ -1,4 +1,4 @@
-# EasyMacKBControl
+# FnBridge
 
 把外接键盘的标准 F 键(如 HHKB 的 Fn+数字)转换成 macOS 妙控键盘 F 区等价的系统功能:亮度、调度中心、Spotlight、媒体控制、音量。菜单栏常驻、逐键开关、开机自启。
 
@@ -17,18 +17,18 @@ Turns the standard F1–F12 keycodes sent by external keyboards (e.g. HHKB Fn+nu
 
 ```bash
 git clone <repo>
-cd EasyMacKBControl
-xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -configuration Release build
+cd FnBridge
+xcodebuild -project FnBridge.xcodeproj -scheme FnBridge -configuration Release build
 ```
 
-把 `build/Release/EasyMacKBControl.app` 拖进 `/Applications` 后运行。
+把 `build/Release/FnBridge.app` 拖进 `/Applications` 后运行。
 
 ## 授权 | Permissions
 
 首次运行需要两项授权(系统会弹窗):
 
 1. **输入监控**(读取按键)与 **辅助功能**(发送系统事件):
-   系统设置 → 隐私与安全性 → 分别勾选 EasyMacKBControl
+   系统设置 → 隐私与安全性 → 分别勾选 FnBridge
 2. 授权后**完全退出并重新打开** App 才生效
 
 ## 使用说明 | Notes
@@ -46,7 +46,7 @@ xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -configu
 ## 开发 | Development
 
 ```bash
-xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS'
+xcodebuild test -project FnBridge.xcodeproj -scheme FnBridge -destination 'platform=macOS'
 ```
 
 - 设计文档:`docs/superpowers/specs/`
