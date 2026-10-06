@@ -1,31 +1,12 @@
-import SwiftUI
+import AppKit
 
+/// AppKit 入口:AppDelegate 持久持有设置窗口,reopen 恢复不依赖 SwiftUI WindowGroup。
 @main
-struct EasyMacKBControlApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        WindowGroup(id: "settings") {
-            SettingsView()
-                .openSettingsOnNotification()
-        }
-        .windowResizability(.contentSize)
-    }
-}
-
-/// 监听 .openSettings 通知(菜单栏/重新打开触发)并打开设置窗口。
-private struct OpenSettingsListener: ViewModifier {
-    @Environment(\.openWindow) private var openWindow
-
-    func body(content: Content) -> some View {
-        content.onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-            openWindow(id: "settings")
-        }
-    }
-}
-
-extension View {
-    func openSettingsOnNotification() -> some View {
-        modifier(OpenSettingsListener())
+struct EasyMacKBControlMain {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
     }
 }

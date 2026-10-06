@@ -9,6 +9,18 @@ final class MenuBarController: NSObject {
 
     private var statusItem: NSStatusItem?
 
+    /// 菜单状态行标题(纯函数,locale 可注入以测试本地化)。
+    static func statusLineTitle(canListen: Bool, canPost: Bool,
+                                monitoring: Bool, locale: Locale) -> String {
+        if canListen && canPost && monitoring {
+            return String(localized: String.LocalizationValue("✓ 运行中"), bundle: .main, locale: locale)
+        } else if !canListen || !canPost {
+            return String(localized: String.LocalizationValue("⚠️ 缺少权限,点击前往系统设置"), bundle: .main, locale: locale)
+        } else {
+            return String(localized: String.LocalizationValue("⚠️ 监听未启动"), bundle: .main, locale: locale)
+        }
+    }
+
     /// 依据 Prefs.showInMenuBar 创建或移除状态栏项。
     /// 由启动流程(Task 8)与设置界面(Task 9)在开关变化时调用。
     func updateVisibility() {
@@ -68,17 +80,19 @@ extension MenuBarController: NSMenuDelegate {
         let monitoring = KeyMonitor.shared.isRunning
 
         let statusLine: NSMenuItem
+        let statusTitle = Self.statusLineTitle(canListen: canListen, canPost: canPost,
+                                               monitoring: monitoring, locale: .current)
         if canListen && canPost && monitoring {
-            statusLine = NSMenuItem(title: "✓ 运行中", action: nil, keyEquivalent: "")
+            statusLine = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         } else if !canListen || !canPost {
-            statusLine = NSMenuItem(title: "⚠️ 缺少权限,点击前往系统设置", action: #selector(openPrivacySettings), keyEquivalent: "")
+            statusLine = NSMenuItem(title: statusTitle, action: #selector(openPrivacySettings), keyEquivalent: "")
         } else {
-            statusLine = NSMenuItem(title: "⚠️ 监听未启动", action: #selector(openSettings), keyEquivalent: "")
+            statusLine = NSMenuItem(title: statusTitle, action: #selector(openSettings), keyEquivalent: "")
         }
         menu.addItem(statusLine)
         menu.addItem(.separator())
 
-        let master = NSMenuItem(title: "启用 F 键转换",
+        let master = NSMenuItem(title: String(localized: "启用 F 键转换"),
                                 action: #selector(toggleMaster(_:)),
                                 keyEquivalent: "")
         master.target = self
@@ -86,13 +100,13 @@ extension MenuBarController: NSMenuDelegate {
         menu.addItem(master)
         menu.addItem(.separator())
 
-        let settings = NSMenuItem(title: "打开设置…",
+        let settings = NSMenuItem(title: String(localized: "打开设置…"),
                                   action: #selector(openSettings),
                                   keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
 
-        let login = NSMenuItem(title: "开机自启",
+        let login = NSMenuItem(title: String(localized: "开机自启"),
                                action: #selector(toggleLaunchAtLogin(_:)),
                                keyEquivalent: "")
         login.target = self
@@ -100,7 +114,7 @@ extension MenuBarController: NSMenuDelegate {
         menu.addItem(login)
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出 EasyMacKBControl",
+        let quitItem = NSMenuItem(title: String(localized: "退出 EasyMacKBControl"),
                                   action: #selector(quit),
                                   keyEquivalent: "q")
         quitItem.target = self
