@@ -199,18 +199,18 @@
         }
       }
     },
-    "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。" : {
+    "监听启动失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Failed to create event tap: enable this app under System Settings › Privacy & Security › Input Monitoring, then fully quit and reopen."
+            "value" : "Failed to start monitoring: enable this app under System Settings › Privacy & Security › Input Monitoring, then fully quit and reopen."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。"
+            "value" : "监听启动失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。"
           }
         }
       }
@@ -392,18 +392,18 @@
         }
       }
     },
-    "开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 未提供公开接口,暂不支持。" : {
+    "开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 系统限制,暂不支持。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "When enabled, this app intercepts the F key and performs the system function; when disabled it stays a normal F key. Note: interception applies to ALL keyboards, including the built-in one. F5 (Dictation) and F6 (Focus) are not supported — macOS has no public API."
+            "value" : "When enabled, this app intercepts the F key and performs the system function; when disabled it stays a normal F key. Note: interception applies to ALL keyboards, including the built-in one. F5 (Dictation) and F6 (Focus) are not supported due to macOS limitations."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 未提供公开接口,暂不支持。"
+            "value" : "开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 系统限制,暂不支持。"
           }
         }
       }
@@ -520,18 +520,18 @@
         }
       }
     },
-    "授权后请完全退出并重新打开本 App 才会生效。从 Xcode 运行时权限偶发不生效,建议打包导出到 /Applications 后再授权。" : {
+    "授权后请完全退出并重新打开本 App 才会生效。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "After granting, fully quit and reopen this app for it to take effect. Permissions can be flaky when running from Xcode — export to /Applications first."
+            "value" : "After granting, fully quit and reopen this app for it to take effect."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授权后请完全退出并重新打开本 App 才会生效。从 Xcode 运行时权限偶发不生效,建议打包导出到 /Applications 后再授权。"
+            "value" : "授权后请完全退出并重新打开本 App 才会生效。"
           }
         }
       }

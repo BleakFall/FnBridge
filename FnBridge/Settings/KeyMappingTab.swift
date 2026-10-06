@@ -22,7 +22,7 @@ struct KeyMappingTab: View {
                 }
             }
 
-            Text("开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 未提供公开接口,暂不支持。")
+            Text("开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 系统限制,暂不支持。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

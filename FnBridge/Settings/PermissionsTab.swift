@@ -23,7 +23,7 @@ struct PermissionsTab: View {
             } header: {
                 Text("状态")
             } footer: {
-                Text("授权后请完全退出并重新打开本 App 才会生效。从 Xcode 运行时权限偶发不生效,建议打包导出到 /Applications 后再授权。")
+                Text("授权后请完全退出并重新打开本 App 才会生效。")
             }
 
             Section {
@@ -102,7 +102,7 @@ struct PermissionsTab: View {
             KeyMonitor.shared.stop()
         } else {
             if !KeyMonitor.shared.start() {
-                message = String(localized: "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。")
+                message = String(localized: "监听启动失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。")
             } else {
                 message = nil
             }
