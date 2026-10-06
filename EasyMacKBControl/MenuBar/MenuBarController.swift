@@ -46,6 +46,7 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func openSettings() {
+        SettingsRouter.shared.selectedTab = .permissions
         NotificationCenter.default.post(name: .openSettings, object: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
