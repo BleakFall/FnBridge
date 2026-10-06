@@ -1,0 +1,2207 @@
+# EasyMacKBControl v2 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 把 EasyMacKBControl 从可用原型升级为可发布社区的完整产品:修复可靠性 bug、菜单栏常驻 + 可切换形态、三 Tab 设置界面、Python 绘制图标、双语、README/LICENSE。
+
+**Architecture:** 现有单文件 KeyMonitor 拆为 Core(纯逻辑:FKeyAction / FKeySettings / SystemEventPoster / KeyMonitor)、App(生命周期:AppDelegate / AppAppearance / LaunchAtLogin)、Settings(SwiftUI 三 Tab)、MenuBar(NSStatusItem)四层。纯逻辑通过依赖注入(UserDefaults、时钟、执行器、派发器)可单元测试。工程为 objectVersion 90 文件系统同步组:**新建 Swift/资源文件放进 `EasyMacKBControl/` 即自动入 target,无需改 pbxproj**;只有加测试 target 需要 pbxproj 手术(Task 2)。
+
+**Tech Stack:** Swift 5 语言模式(SWIFT_APPROACHABLE_CONCURRENCY=YES,默认 nonisolated)、SwiftUI + AppKit(NSStatusItem / NSApplicationDelegateAdaptor)、SMAppService(macOS 13+)、String Catalog 双语(zh-Hans 源 + en)、Python 3 + Pillow(仅工具脚本)。
+
+**Spec:** `docs/superpowers/specs/2026-10-06-easymackbcontrol-v2-design.md`
+
+## Global Constraints
+
+- 部署目标 `MACOSX_DEPLOYMENT_TARGET = 13.0`(若工具链拒绝,升到其接受的最小值并同步更新 spec §3)
+- Bundle ID 恒为 `com.daixingwen.easymackbcontrol`(测试 target 用 `com.daixingwen.easymackbcontrol.tests`),一经设定不再变更
+- App 无第三方运行时依赖;Pillow 仅存在于 `tools/.venv`(不提交 venv,提交脚本)
+- 所有新 Swift 文件放 `EasyMacKBControl/` 子目录(同步文件夹自动编译);测试文件放 `EasyMacKBControlTests/`
+- UI 文案:zh-Hans 为源语言(String Catalog `sourceLanguage: zh-Hans`),提供 en 翻译
+- 许可证 MIT,版权 `2026 daixingwen`
+- 并发:沿用工程现有 `SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated` + Swift 5 模式,不引入 async/await 改造
+- 每个任务以 `xcodebuild` 实际构建/测试通过为完成标准;提交信息用约定式前缀(feat/fix/docs/chore/test)
+
+## Review Focus
+
+1. **陈旧的启用数据含 F5/F6**(旧版本残留 UserDefaults)→ F5/F6 必须原样放行,不得变成"被吞但无功能"的死键。测试:Task 5 `testUnsupportedKeysAreNeverIntercepted`。
+2. **120ms 内连按两个不同 F 键**(如 F7 后紧跟 F9)→ 两个都必须触发。测试:Task 5 `testRapidDifferentKeysBothFire`。
+3. **系统禁用事件钩子(tapDisabledByTimeout)** → 必须自动重新启用,F 键持续有效。测试:Task 5 `testTapDisabledEventsPassThroughAndDoNotStopMonitor`(nil-tap 安全路径)+ Task 10 人工挂机验收。
+4. **运行中权限被吊销(tapDisabledByUserInput)** → 监听状态必须如实变为"未运行",UI/菜单不得谎报正常。测试:Task 5 `testTapDisabledByUserInputStopsMonitor`。
+5. **程序坞与状态栏图标同时隐藏后用户重新打开 App** → 必须弹出设置窗口找回。测试:Task 8 `testActivationPolicyMapping` + Task 10 人工验收"双隐藏找回"。
+
+---
+
+### Task 1: 工程配置定稿(Bundle ID / 部署目标 13 / LSUIElement / zh-Hans)
+
+**Files:**
+- Modify: `EasyMacKBControl.xcodeproj/project.pbxproj`
+
+**Interfaces:**
+- Consumes: 无
+- Produces: 后续所有任务依赖的构建配置:`PRODUCT_BUNDLE_IDENTIFIER = com.daixingwen.easymackbcontrol`、`MACOSX_DEPLOYMENT_TARGET = 13.0`、`INFOPLIST_KEY_LSUIElement = YES`(启动即无 Dock 图标)、`ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`(Task 6 产出的图标由此生效)、knownRegions 含 `zh-Hans`(Task 9 本地化依赖)
+
+- [ ] **Step 1: 修改两个 target 级配置块(Debug/Release 各一处,共 4 行)**
+
+在 `000000000000000111000000`(Debug)和 `000000000000000112000000`(Release)两个块中,把:
+
+```
+PRODUCT_BUNDLE_IDENTIFIER = "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:rfc1034identifier)";
+```
+
+替换为:
+
+```
+PRODUCT_BUNDLE_IDENTIFIER = com.daixingwen.easymackbcontrol;
+```
+
+- [ ] **Step 2: 在两个 target 级配置块的 buildSettings 中新增 3 行**
+
+紧跟每处 `GENERATE_INFOPLIST_FILE = YES;` 之后插入:
+
+```
+INFOPLIST_KEY_LSUIElement = YES;
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+```
+
+- [ ] **Step 3: 删除 target 级配置块中全部 iOS 遗留键**
+
+两个 target 配置块中,删除以下 10 行(它们是 iOS 多平台模板残留,`SUPPORTED_PLATFORMS = macosx` 下无用):
+
+```
+"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "...";
+INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "...";
+```
+
+(后两行整行删除,值较长,以行首 `INFOPLIST_KEY_UISupportedInterfaceOrientations` 为准。)
+
+- [ ] **Step 4: 项目级部署目标 27.0 → 13.0(4 处)**
+
+项目级两个配置块(`000000000000000011000000` Debug / `000000000000000012000000` Release)中,`MACOSX_DEPLOYMENT_TARGET = 27.0;` 全部替换为 `MACOSX_DEPLOYMENT_TARGET = 13.0;`。iOS/tvOS/watchOS/xrOS/DriverKit 的 `*_DEPLOYMENT_TARGET` 行保持不动(无影响,可不删)。
+
+- [ ] **Step 5: knownRegions 加入 zh-Hans**
+
+PBXProject 对象的 `knownRegions` 改为:
+
+```
+knownRegions = (
+    en,
+    Base,
+    zh-Hans,
+);
+```
+
+- [ ] **Step 6: 构建验证 + Info.plist 抽查**
+
+Run: `cd /Users/daixingwen/Documents/Code/iOSWrokSpace/EasyMacKBControl && xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -configuration Debug -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`
+
+Run: `plutil -p ~/Library/Developer/Xcode/DerivedData/EasyMacKBControl-*/Build/Products/Debug/EasyMacKBControl.app/Contents/Info.plist | grep -E 'LSUIElement|CFBundleIdentifier'`
+Expected: 输出 `"LSUIElement" => 1` 与 `"CFBundleIdentifier" => "com.daixingwen.easymackbcontrol"`
+
+若工具链拒绝 13.0(报 deployment target 不支持),把 13.0 升到报错中提示的最小可接受值,重跑构建,并同步修改 spec §3 表格与 Global Constraints。
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add EasyMacKBControl.xcodeproj/project.pbxproj
+git commit -m "chore: 定稿 Bundle ID、部署目标 13.0、LSUIElement、AppIcon 构建配置"
+```
+
+---
+
+### Task 2: 添加单元测试 target(pbxproj 手术 + 共享 scheme)
+
+**Files:**
+- Modify: `EasyMacKBControl.xcodeproj/project.pbxproj`
+- Create: `EasyMacKBControlTests/SmokeTests.swift`
+- Create: `EasyMacKBControl.xcodeproj/xcshareddata/xcschemes/EasyMacKBControl.xcscheme`
+
+**Interfaces:**
+- Consumes: app target `EasyMacKBControl`(host)
+- Produces: 可运行的测试 target `EasyMacKBControlTests`(host 在 App 内),命令 `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS'`;后续所有任务的单测都放 `EasyMacKBControlTests/`,用 `@testable import EasyMacKBControl`
+
+- [ ] **Step 1: 创建测试目录与冒烟测试**
+
+创建 `EasyMacKBControlTests/SmokeTests.swift`:
+
+```swift
+import XCTest
+@testable import EasyMacKBControl
+
+final class SmokeTests: XCTestCase {
+    func testFKeyActionHasTwelveCases() {
+        XCTAssertEqual(FKeyAction.allCases.count, 12)
+    }
+}
+```
+
+- [ ] **Step 2: pbxproj 添加测试 target 对象**
+
+在 `/* End PBXFileSystemSynchronizedRootGroup section */` 之前插入:
+
+```
+		000000000000000000000210 /* EasyMacKBControlTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = EasyMacKBControlTests;
+			sourceTree = "<group>";
+		};
+```
+
+在 `/* Begin PBXNativeTarget section */` 块末尾(现有 app target 定义 `};` 之后、`/* End PBXNativeTarget section */` 之前)插入:
+
+```
+		000000000000000000000200 /* EasyMacKBControlTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000250 /* Build configuration list for PBXNativeTarget "EasyMacKBControlTests" */;
+			buildPhases = (
+				000000000000000000000220 /* Sources */,
+				000000000000000000000230 /* Frameworks */,
+				000000000000000000000240 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000210 /* EasyMacKBControlTests */,
+			);
+			name = EasyMacKBControlTests;
+			packageProductDependencies = (
+			);
+			productName = EasyMacKBControlTests;
+			productReference = 000000000000000000000201 /* EasyMacKBControlTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+```
+
+在 `/* Begin PBXFileReference section */` 中(app 的 .app 引用之后)插入:
+
+```
+		000000000000000000000201 /* EasyMacKBControlTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EasyMacKBControlTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+```
+
+- [ ] **Step 3: pbxproj 添加三个 build phase**
+
+在 `/* End PBXResourcesBuildPhase section */` 之后插入:
+
+```
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000240 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000220 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000230 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+```
+
+注意:原文件已有 `PBXResourcesBuildPhase` / `PBXSourcesBuildPhase` / `PBXFrameworksBuildPhase` 的 Begin/End 段,把上面三个对象**合并进对应现有段内**(不要产生重复的段标记)。
+
+- [ ] **Step 4: pbxproj 添加测试 target 的构建配置**
+
+在 `/* End XCBuildConfiguration section */` 之前插入:
+
+```
+		000000000000000000000251 /* Debug configuration for PBXNativeTarget "EasyMacKBControlTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = TC784Q5595;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daixingwen.easymackbcontrol.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EasyMacKBControl.app/Contents/MacOS/EasyMacKBControl";
+			};
+			name = Debug;
+		};
+		000000000000000000000252 /* Release configuration for PBXNativeTarget "EasyMacKBControlTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = TC784Q5595;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.daixingwen.easymackbcontrol.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EasyMacKBControl.app/Contents/MacOS/EasyMacKBControl";
+			};
+			name = Release;
+		};
+```
+
+在 `/* End XCConfigurationList section */` 之前插入:
+
+```
+		000000000000000000000250 /* Build configuration list for PBXNativeTarget "EasyMacKBControlTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000251 /* Debug configuration for PBXNativeTarget "EasyMacKBControlTests" */,
+				000000000000000000000252 /* Release configuration for PBXNativeTarget "EasyMacKBControlTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+```
+
+- [ ] **Step 5: 把测试 target 挂到工程对象上**
+
+PBXProject 对象(`000000000000000000000000`)中:
+
+`targets` 列表改为:
+
+```
+			targets = (
+				000000000000000000000100 /* EasyMacKBControl */,
+				000000000000000000000200 /* EasyMacKBControlTests */,
+			);
+```
+
+`TargetAttributes` 改为:
+
+```
+				TargetAttributes = {
+					000000000000000000000100 = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					000000000000000000000200 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 000000000000000000000100 /* EasyMacKBControl */;
+					};
+				};
+```
+
+主 group `000000000000000000000001` 的 children 加入测试文件夹:
+
+```
+			children = (
+				000000000000000000000010 /* EasyMacKBControl */,
+				000000000000000000000210 /* EasyMacKBControlTests */,
+				000000000000000000000020 /* Products */,
+			);
+```
+
+Products group `000000000000000000000020` 的 children 加入:
+
+```
+				000000000000000000000201 /* EasyMacKBControlTests.xctest */,
+```
+
+- [ ] **Step 6: 创建共享 scheme**
+
+创建 `EasyMacKBControl.xcodeproj/xcshareddata/xcschemes/EasyMacKBControl.xcscheme`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "2700"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "000000000000000000000100"
+               BuildableName = "EasyMacKBControl.app"
+               BlueprintName = "EasyMacKBControl"
+               ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldAutocreateTestPlan = "YES">
+      <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "000000000000000000000200"
+               BuildableName = "EasyMacKBControlTests.xctest"
+               BlueprintName = "EasyMacKBControlTests"
+               ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "000000000000000000000100"
+            BuildableName = "EasyMacKBControl.app"
+            BlueprintName = "EasyMacKBControl"
+            ReferencedContainer = "container:EasyMacKBControl.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+</Scheme>
+```
+
+- [ ] **Step 7: 验证测试可运行**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | tail -8`
+Expected: `** TEST SUCCEEDED **`,且包含 `Test Case '...SmokeTests.testFKeyActionHasTwelveCases' passed`
+
+(注:测试会拉起 App 宿主;无输入监控权限时 KeyMonitor 启动失败属预期,不影响测试结果。)
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add EasyMacKBControl.xcodeproj EasyMacKBControlTests
+git commit -m "test: 添加 EasyMacKBControlTests 单元测试 target 与共享 scheme"
+```
+
+---
+
+### Task 3: Core 纯逻辑抽取(FKeyAction / FKeySettings / Prefs)
+
+**Files:**
+- Create: `EasyMacKBControl/Core/FKeyAction.swift`
+- Create: `EasyMacKBControl/Core/FKeySettings.swift`
+- Create: `EasyMacKBControl/Core/Prefs.swift`
+- Modify: `EasyMacKBControl/KeyMonitor.swift`(删除被移走的 FKeyAction 定义与启用状态存取)
+- Test: `EasyMacKBControlTests/FKeySettingsTests.swift`
+
+**Interfaces:**
+- Consumes: 无(纯逻辑)
+- Produces(Task 4/5/7/9 依赖):
+  - `enum FKeyAction: String, CaseIterable, Identifiable` — 属性 `keyCode: CGKeyCode`、`keyLabel: String`、`title: String`、`supported: Bool`、`isRepeatable: Bool`、`static defaultEnabled: Set<FKeyAction>`(从现 KeyMonitor.swift 原样搬移)
+  - `struct FKeySettings` — `init(defaults: UserDefaults = .standard)`;`var enabled: Set<FKeyAction> { get set }`;`var masterEnabled: Bool { get set }`;`func isInterceptable(_ action: FKeyAction) -> Bool`;**`mutating`** `func setEnabled(_ action: FKeyAction, _ on: Bool)`;**`mutating`** `func resetToDefaults()`(mutating 是刻意的:@State 包装的 mutating 调用会触发 SwiftUI 刷新,见 Task 9)
+  - `enum Prefs` — 键名常量 `enabledFKeyActions` / `masterEnabled` / `showInDock` / `showInMenuBar`;`static func masterEnabled(defaults:) -> Bool`、`static func showInDock(defaults:) -> Bool`、`static func showInMenuBar(defaults:) -> Bool`(缺省 true/false/true)
+  - `extension Notification.Name { static let openSettings }`(定义在 Prefs.swift,供 Task 7/8 使用)
+
+- [ ] **Step 1: 写失败测试**
+
+创建 `EasyMacKBControlTests/FKeySettingsTests.swift`:
+
+```swift
+import XCTest
+@testable import EasyMacKBControl
+
+final class FKeySettingsTests: XCTestCase {
+    private var suite: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suite = UserDefaults(suiteName: "FKeySettingsTests")
+        suite.removePersistentDomain(forName: "FKeySettingsTests")
+    }
+
+    override func tearDown() {
+        suite.removePersistentDomain(forName: "FKeySettingsTests")
+        suite = nil
+        super.tearDown()
+    }
+
+    func testKeyCodeMappingIsCompleteAndUnique() {
+        let codes = FKeyAction.allCases.map(\.keyCode)
+        XCTAssertEqual(codes.count, 12)
+        XCTAssertEqual(Set(codes).count, 12, "每个 F 键键码必须唯一")
+        XCTAssertEqual(FKeyAction.allCases.first?.keyCode, 122) // F1
+        XCTAssertEqual(FKeyAction.allCases.last?.keyCode, 111)  // F12
+    }
+
+    func testDefaultEnabledExcludesUnsupported() {
+        XCTAssertFalse(FKeySettings(defaults: suite).enabled.contains(.dictation))
+        XCTAssertFalse(FKeySettings(defaults: suite).enabled.contains(.focus))
+        XCTAssertTrue(FKeySettings(defaults: suite).enabled.contains(.missionControl))
+    }
+
+    func testPersistenceRoundTrip() {
+        var s = FKeySettings(defaults: suite)
+        s.setEnabled(.playPause, false)
+        s.setEnabled(.focus, true) // 不支持的也允许写入,但见下一个测试
+        let reloaded = FKeySettings(defaults: suite)
+        XCTAssertFalse(reloaded.enabled.contains(.playPause))
+        XCTAssertTrue(reloaded.enabled.contains(.focus))
+    }
+
+    func testMasterEnabledRoundTrip() {
+        XCTAssertTrue(FKeySettings(defaults: suite).masterEnabled, "缺省 true")
+        var s = FKeySettings(defaults: suite)
+        s.masterEnabled = false
+        XCTAssertFalse(FKeySettings(defaults: suite).masterEnabled)
+    }
+
+    func testUnsupportedActionIsNeverInterceptable() {
+        var s = FKeySettings(defaults: suite)
+        s.setEnabled(.dictation, true)
+        s.setEnabled(.focus, true)
+        XCTAssertFalse(s.isInterceptable(.dictation), "死键防护:F5 残留启用状态也不得拦截")
+        XCTAssertFalse(s.isInterceptable(.focus), "死键防护:F6 残留启用状态也不得拦截")
+    }
+
+    func testGarbagePersistedValuesAreDropped() {
+        suite.set(["missionControl", "notARealAction", "", "volumeUp"],
+                  forKey: Prefs.enabledFKeyActions)
+        let s = FKeySettings(defaults: suite)
+        XCTAssertEqual(s.enabled, [.missionControl, .volumeUp])
+    }
+
+    func testEmptyPersistedSetDisablesEverything() {
+        suite.set([String](), forKey: Prefs.enabledFKeyActions)
+        XCTAssertTrue(FKeySettings(defaults: suite).enabled.isEmpty)
+        XCTAssertFalse(FKeySettings(defaults: suite).isInterceptable(.missionControl))
+    }
+
+    func testResetToDefaultsRestoresDefaults() {
+        var s = FKeySettings(defaults: suite)
+        s.setEnabled(.volumeUp, false)
+        s.resetToDefaults()
+        XCTAssertEqual(FKeySettings(defaults: suite).enabled, FKeyAction.defaultEnabled)
+    }
+
+    func testPrefsDefaults() {
+        XCTAssertTrue(Prefs.masterEnabled(defaults: suite))
+        XCTAssertFalse(Prefs.showInDock(defaults: suite))
+        XCTAssertTrue(Prefs.showInMenuBar(defaults: suite))
+        suite.set(false, forKey: Prefs.masterEnabled)
+        XCTAssertFalse(Prefs.masterEnabled(defaults: suite))
+    }
+}
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "error|TEST" | head -10`
+Expected: 编译错误 `cannot find 'FKeySettings' in scope` / `'Prefs' is not a type` — TEST FAILED
+
+- [ ] **Step 3: 创建 Core/FKeyAction.swift**
+
+把现 `KeyMonitor.swift` 第 6–105 行(`// MARK: - F 区功能定义` 到 `FKeyAction` 枚举结束)整体搬移到新文件,文件头:
+
+```swift
+import CoreGraphics
+
+// F 区功能定义(原 KeyMonitor.swift 搬移,内容不变):
+// enum FKeyAction: String, CaseIterable, Identifiable { ... keyCode/keyLabel/title/supported/isRepeatable/defaultEnabled 全部保持原样 ... }
+```
+
+枚举体逐字保留(含注释)。
+
+- [ ] **Step 4: 创建 Core/Prefs.swift**
+
+```swift
+import Foundation
+
+/// 全 App 共用的偏好键名与缺省值。唯一事实来源是 UserDefaults;
+/// SwiftUI 侧用 @AppStorage,非 UI 侧用这里的读取函数,两边键名必须一致。
+enum Prefs {
+    static let enabledFKeyActions = "enabledFKeyActions"
+    static let masterEnabled = "masterEnabled"
+    static let showInDock = "showInDock"
+    static let showInMenuBar = "showInMenuBar"
+
+    /// 缺省 true(未写入视为开启)。
+    static func masterEnabled(defaults: UserDefaults = .standard) -> Bool {
+        (defaults.object(forKey: masterEnabled) as? Bool) ?? true
+    }
+
+    /// 缺省 false。
+    static func showInDock(defaults: UserDefaults = .standard) -> Bool {
+        (defaults.object(forKey: showInDock) as? Bool) ?? false
+    }
+
+    /// 缺省 true。
+    static func showInMenuBar(defaults: UserDefaults = .standard) -> Bool {
+        (defaults.object(forKey: showInMenuBar) as? Bool) ?? true
+    }
+}
+
+extension Notification.Name {
+    /// 请求打开设置窗口(Task 8 的 App 入口监听此通知)。
+    static let openSettings = Notification.Name("EasyMacKBControl.openSettings")
+}
+```
+
+- [ ] **Step 5: 创建 Core/FKeySettings.swift**
+
+```swift
+import Foundation
+
+/// F 键启用状态的存取层。纯逻辑,注入 UserDefaults 以便单元测试。
+struct FKeySettings {
+    var defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var enabled: Set<FKeyAction> {
+        get {
+            guard let raw = defaults.stringArray(forKey: Prefs.enabledFKeyActions) else {
+                return FKeyAction.defaultEnabled
+            }
+            return Set(raw.compactMap { FKeyAction(rawValue: $0) })
+        }
+        set {
+            defaults.set(newValue.map { $0.rawValue }.sorted(),
+                         forKey: Prefs.enabledFKeyActions)
+        }
+    }
+
+    /// 全局总开关。缺省 true。KeyMonitor 通过注入的 defaults 读取(可测)。
+    var masterEnabled: Bool {
+        get { (defaults.object(forKey: Prefs.masterEnabled) as? Bool) ?? true }
+        set { defaults.set(newValue, forKey: Prefs.masterEnabled) }
+    }
+
+    /// 死键防护:不支持的键(F5/F6)永远不拦截,即使残留启用状态。
+    func isInterceptable(_ action: FKeyAction) -> Bool {
+        action.supported && enabled.contains(action)
+    }
+
+    /// mutating 是刻意的:@State 包装下的 mutating 调用会触发 SwiftUI 刷新。
+    mutating func setEnabled(_ action: FKeyAction, _ on: Bool) {
+        var set = enabled
+        if on { set.insert(action) } else { set.remove(action) }
+        enabled = set
+    }
+
+    mutating func resetToDefaults() {
+        defaults.removeObject(forKey: Prefs.enabledFKeyActions)
+    }
+}
+```
+
+- [ ] **Step 6: 从 KeyMonitor.swift 删除已搬移部分**
+
+删除 `FKeyAction` 枚举定义(现 13–105 行)、`enabledActions`/`isEnabled`/`setEnabled`/`resetToDefaults`(现 235–263 行)。`action(forKeyCode:)` 暂时改为编译通过的最小形态(本任务只做搬移,行为改造在 Task 5):
+
+```swift
+    private func action(forKeyCode keyCode: CGKeyCode) -> FKeyAction? {
+        guard let action = FKeyAction.allCases.first(where: { $0.keyCode == keyCode }) else {
+            return nil
+        }
+        return FKeySettings().enabled.contains(action) ? action : nil
+    }
+```
+
+- [ ] **Step 7: 运行测试确认通过**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "Test Case|TEST" | tail -12`
+Expected: 全部 Test Case passed,`TEST SUCCEEDED`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add EasyMacKBControl EasyMacKBControlTests
+git commit -m "refactor: 抽取 FKeyAction/FKeySettings/Prefs 为可测纯逻辑,含死键防护"
+```
+
+---
+
+### Task 4: SystemEventPoster 抽取(事件发送 + 纯函数编码)
+
+**Files:**
+- Create: `EasyMacKBControl/Core/SystemEventPoster.swift`
+- Modify: `EasyMacKBControl/KeyMonitor.swift`(删除被移走的发送函数,改为调用 SystemEventPoster)
+- Test: `EasyMacKBControlTests/SystemEventPosterTests.swift`
+
+**Interfaces:**
+- Consumes: `FKeyAction`(Task 3)
+- Produces: `enum SystemEventPoster` — `static func post(_ action: FKeyAction)`(Task 5 的默认执行器);纯函数 `static func auxEventData1(key: Int32, down: Bool) -> Int`;`static let auxKeyByAction: [FKeyAction: Int32]`
+
+- [ ] **Step 1: 写失败测试**
+
+创建 `EasyMacKBControlTests/SystemEventPosterTests.swift`:
+
+```swift
+import XCTest
+@testable import EasyMacKBControl
+
+final class SystemEventPosterTests: XCTestCase {
+    func testAuxEventData1Encoding() {
+        // 按下 = keyCode << 16 | 0xA00;抬起 = keyCode << 16 | 0xB00(IOKit NX 规范)
+        XCTAssertEqual(SystemEventPoster.auxEventData1(key: 0, down: true), 0xA00)
+        XCTAssertEqual(SystemEventPoster.auxEventData1(key: 0, down: false), 0xB00)
+        XCTAssertEqual(SystemEventPoster.auxEventData1(key: 16, down: true), 16 << 16 | 0xA00)
+        XCTAssertEqual(SystemEventPoster.auxEventData1(key: 3, down: false), 3 << 16 | 0xB00)
+    }
+
+    func testAuxKeyMappingMatchesIOKitConstants() {
+        // NX_KEYTYPE_* 常量值,与 IOKit hidsystem 一致
+        let expected: [FKeyAction: Int32] = [
+            .brightnessDown: 3, .brightnessUp: 2,
+            .previousTrack: 18, .playPause: 16, .nextTrack: 17,
+            .mute: 7, .volumeDown: 1, .volumeUp: 0,
+        ]
+        XCTAssertEqual(SystemEventPoster.auxKeyByAction, expected)
+    }
+
+    func testEveryRepeatableActionHasImplementationPath() {
+        // 可重复触发的动作必须都有发送路径(不进 default 分支被忽略)
+        for action in FKeyAction.allCases where action.supported {
+            if SystemEventPoster.auxKeyByAction[action] == nil {
+                XCTAssertNotEqual(action, .missionControl, "missionControl 走 App 启动路径")
+                XCTAssertNotEqual(action, .spotlight, "spotlight 走 Cmd+Space 路径")
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "error" | head -5`
+Expected: `cannot find 'SystemEventPoster' in scope` — TEST FAILED
+
+- [ ] **Step 3: 创建 Core/SystemEventPoster.swift**
+
+把现 KeyMonitor.swift 的 `AuxControlKey`、`postAuxKey`、`postAuxKeyEvent`、`postSpotlight`、`postMissionControl` 搬入并重组:
+
+```swift
+import Cocoa
+import OSLog
+
+private let log = Logger(subsystem: "EasyMacKBControl", category: "SystemEventPoster")
+
+/// 系统事件发送层:把 FKeyAction 转成等价的系统功能。
+/// 发送副作用集中在此,纯数据(auxEventData1 / auxKeyByAction)可单测。
+enum SystemEventPoster {
+    /// FKeyAction → NX_KEYTYPE_*(IOKit hidsystem 常量值)。
+    static let auxKeyByAction: [FKeyAction: Int32] = [
+        .volumeUp: 0, .volumeDown: 1,
+        .brightnessUp: 2, .brightnessDown: 3,
+        .mute: 7,
+        .playPause: 16, .nextTrack: 17, .previousTrack: 18,
+    ]
+
+    /// NX_SUBTYPE_AUX_CONTROL_BUTTONS 的 data1 编码(纯函数,可单测)。
+    static func auxEventData1(key: Int32, down: Bool) -> Int {
+        Int(key) << 16 | (down ? 0xA00 : 0xB00)
+    }
+
+    /// 发送一个动作(按下+抬起)。Task 5 的默认执行器。
+    static func post(_ action: FKeyAction) {
+        switch action {
+        case .missionControl:
+            postMissionControl()
+        case .spotlight:
+            postSpotlight()
+        case .dictation, .focus:
+            log.notice("动作 \(action.rawValue) 暂无公开接口,忽略")
+        default:
+            guard let key = auxKeyByAction[action] else {
+                log.error("动作 \(action.rawValue) 没有对应的 NX 键值")
+                return
+            }
+            postAuxKeyEvent(key, down: true)
+            postAuxKeyEvent(key, down: false)
+        }
+    }
+
+    // MARK: - 以下为私有实现(从原 KeyMonitor.swift 原样搬移)
+
+    private static func postAuxKeyEvent(_ key: Int32, down: Bool) {
+        let data1 = auxEventData1(key: key, down: down)
+        let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
+        guard let event = NSEvent.otherEvent(
+            with: .systemDefined, location: .zero, modifierFlags: flags,
+            timestamp: 0, windowNumber: 0, context: nil,
+            subtype: 8, data1: data1, data2: -1
+        ) else {
+            log.error("构造系统定义事件失败")
+            return
+        }
+        event.cgEvent?.post(tap: .cghidEventTap)
+    }
+
+    private static func postSpotlight() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let space: CGKeyCode = 49
+        let down = CGEvent(keyboardEventSource: source, virtualKey: space, keyDown: true)
+        down?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: space, keyDown: false)
+        up?.flags = .maskCommand
+        up?.post(tap: .cghidEventTap)
+    }
+
+    private static func postMissionControl() {
+        let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            if let error {
+                log.error("启动 Mission Control.app 失败: \(error.localizedDescription)")
+            } else {
+                log.info("已通过系统 Mission Control.app 唤起调度中心")
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 4: 清理 KeyMonitor.swift**
+
+删除 KeyMonitor.swift 中 `AuxControlKey`、`postAuxKey`、`postAuxKeyEvent`、`postSpotlight` 定义与 `postMissionControl()`;`perform` 里的 switch 整体替换为:
+
+```swift
+    private static func perform(_ action: FKeyAction) {
+        SystemEventPoster.post(action)
+    }
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "Test Case|TEST" | tail -6`
+Expected: 全部 passed,`TEST SUCCEEDED`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add EasyMacKBControl EasyMacKBControlTests
+git commit -m "refactor: 事件发送抽取为 SystemEventPoster,data1 编码提为纯函数"
+```
+
+---
+
+### Task 5: KeyMonitor 可靠性修复(自愈 / 每键节流 / 总开关 / 可注入)
+
+**Files:**
+- Modify: `EasyMacKBControl/KeyMonitor.swift`(整体重构,见 Step 3 全量代码)
+- Test: `EasyMacKBControlTests/KeyMonitorTests.swift`
+
+**Interfaces:**
+- Consumes: `FKeyAction`、`FKeySettings`、`Prefs`(Task 3)、`SystemEventPoster.post`(Task 4)
+- Produces(Task 8/9 依赖):
+  - `final class KeyMonitor` — `static let shared: KeyMonitor`;`init(settings: FKeySettings = FKeySettings(), performer: @escaping (FKeyAction) -> Void = SystemEventPoster.post, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, dispatch: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) })`
+  - `func start() -> Bool` / `func stop()` / `private(set) var isRunning: Bool`
+  - `func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>?`(internal,测试直接调用)
+  - 诊断属性保持:`lastKeyCode: Int64`、`lastTriggerDate: Date?`、`lastAction: FKeyAction?`
+
+- [ ] **Step 1: 写失败测试**
+
+创建 `EasyMacKBControlTests/KeyMonitorTests.swift`:
+
+```swift
+import Carbon.HIToolbox
+import CoreGraphics
+import XCTest
+@testable import EasyMacKBControl
+
+final class KeyMonitorTests: XCTestCase {
+    private var suite: UserDefaults!
+    private var recorded: [FKeyAction] = []
+    /// 固定时钟,测试里手动推进。
+    private var now: TimeInterval = 1000
+    private var monitor: KeyMonitor!
+
+    override func setUp() {
+        super.setUp()
+        suite = UserDefaults(suiteName: "KeyMonitorTests")
+        suite.removePersistentDomain(forName: "KeyMonitorTests")
+        recorded = []
+        now = 1000
+        monitor = KeyMonitor(
+            settings: FKeySettings(defaults: suite),
+            performer: { [weak self] in self?.recorded.append($0) },
+            clock: { [weak self] in self?.now ?? 0 },
+            dispatch: { $0() }   // 测试中同步执行
+        )
+    }
+
+    override func tearDown() {
+        suite.removePersistentDomain(forName: "KeyMonitorTests")
+        suite = nil
+        monitor = nil
+        super.tearDown()
+    }
+
+    private func keyEvent(_ code: CGKeyCode, repeat: Bool = false) -> CGEvent {
+        let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)!
+        if repeat { e.setIntegerValueField(.keyboardEventAutorepeat, 1) }
+        return e
+    }
+
+    func testEnabledKeyIsSwallowedAndPerformed() {
+        monitor.handle(type: .keyDown, event: keyEvent(99)) // F3 missionControl
+        XCTAssertEqual(recorded, [.missionControl])
+    }
+
+    func testUnsupportedKeysAreNeverIntercepted() {
+        // 模拟旧版本残留:F5/F6 被写入启用集合
+        var set = FKeyAction.defaultEnabled
+        set.insert(.dictation); set.insert(.focus)
+        suite.set(set.map(\.rawValue), forKey: Prefs.enabledFKeyActions)
+
+        for code in [CGKeyCode(96), CGKeyCode(97)] { // F5/F6
+            XCTAssertNotNil(monitor.handle(type: .keyDown, event: keyEvent(code)),
+                            "不支持的键必须原样放行(死键防护)")
+        }
+        XCTAssertTrue(recorded.isEmpty)
+    }
+
+    func testDisabledKeyPassesThrough() {
+        suite.set([String](), forKey: Prefs.enabledFKeyActions) // 全部关闭
+        XCTAssertNotNil(monitor.handle(type: .keyDown, event: keyEvent(99)))
+        XCTAssertTrue(recorded.isEmpty)
+    }
+
+    func testMasterOffPassesEverything() {
+        suite.set(false, forKey: Prefs.masterEnabled)
+        XCTAssertNotNil(monitor.handle(type: .keyDown, event: keyEvent(99)))
+        XCTAssertTrue(recorded.isEmpty)
+    }
+
+    func testRapidDifferentKeysBothFire() {
+        monitor.handle(type: .keyDown, event: keyEvent(98))  // F7
+        now += 0.05                                           // 50ms 后
+        monitor.handle(type: .keyDown, event: keyEvent(101)) // F9
+        XCTAssertEqual(recorded, [.previousTrack, .nextTrack],
+                       "不同键的节流互不影响")
+    }
+
+    func testSameKeyWithinDebounceFiresOnce() {
+        monitor.handle(type: .keyDown, event: keyEvent(103)) // F11
+        now += 0.05
+        monitor.handle(type: .keyDown, event: keyEvent(103))
+        XCTAssertEqual(recorded, [.volumeDown])
+        now += 0.2 // 超过节流窗口后可再次触发
+        monitor.handle(type: .keyDown, event: keyEvent(103))
+        XCTAssertEqual(recorded, [.volumeDown, .volumeDown])
+    }
+
+    func testNonRepeatableActionIgnoresAutoRepeat() {
+        let e1 = keyEvent(99)
+        monitor.handle(type: .keyDown, event: e1)
+        let e2 = keyEvent(99, repeat: true)
+        monitor.handle(type: .keyDown, event: e2)
+        XCTAssertEqual(recorded, [.missionControl])
+    }
+
+    func testKeyUpOfInterceptedKeyIsSwallowed() {
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: 99, keyDown: false)!
+        XCTAssertNil(monitor.handle(type: .keyUp, event: up),
+                     "已启用键的 keyUp 也要吞掉,避免按键穿透")
+        XCTAssertTrue(recorded.isEmpty) // keyUp 不触发动作
+    }
+
+    func testTapDisabledEventsPassThroughAndDoNotStopMonitor() {
+        let e = keyEvent(99)
+        // eventTap 为 nil(未 start)时走安全路径,不崩溃、不置 isRunning
+        XCTAssertNotNil(monitor.handle(type: .tapDisabledByTimeout, event: e))
+        XCTAssertFalse(monitor.isRunning)
+        XCTAssertNotNil(monitor.handle(type: .tapDisabledByUserInput, event: e))
+        XCTAssertFalse(monitor.isRunning)
+    }
+
+    func testTapDisabledByUserInputStopsMonitor() {
+        monitor.startIfPossibleForTesting()
+        XCTAssertTrue(monitor.isRunning)
+        let e = keyEvent(99)
+        monitor.handle(type: .tapDisabledByUserInput, event: e)
+        XCTAssertFalse(monitor.isRunning, "权限被吊销后状态必须如实变为未运行")
+    }
+}
+```
+
+注意 `startIfPossibleForTesting()`:测试环境没有输入监控权限,`start()` 可能失败,所以 Step 3 在 KeyMonitor 中加一个测试后门:
+
+```swift
+    /// 仅供测试:绕过权限直接置为运行态。
+    func startIfPossibleForTesting() {
+        isRunning = true
+    }
+```
+
+(`testTapDisabledByUserInputStopsMonitor` 断言的是状态迁移本身——`.tapDisabledByUserInput` 必须把 `isRunning` 置 false——这是 UI 如实显示的前提。)
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "error" | head -5`
+Expected: 编译错误(新 init 参数不存在/`handle` 不可见等)— TEST FAILED
+
+- [ ] **Step 3: 重写 KeyMonitor.swift**
+
+全量替换为(保留原文件注释风格,关键差异已标注):
+
+```swift
+import Cocoa
+import OSLog
+
+private let log = Logger(subsystem: "EasyMacKBControl", category: "KeyMonitor")
+
+/// 全局事件钩子:把“标准 F 键码”转换成 macOS 系统功能。
+///
+/// 原理:
+/// - 苹果原装键盘的 F 区专用功能发的是系统私有 HID usage,不经过这里(不受影响)。
+/// - 外接键盘(如 HHKB 的 Fn+数字)发的是标准 F 键码,这里拦截并转成对应系统功能。
+///
+/// 可靠性设计(v2):
+/// - tap 被系统超时禁用时自动重新启用(自愈),不再静默失效。
+/// - 权限被吊销(tapDisabledByUserInput)时如实置为未运行,供 UI 提示。
+/// - 节流按键独立:快速连按不同 F 键互不影响。
+/// - 总开关(masterEnabled)关闭时放行所有键。
+final class KeyMonitor {
+    static let shared = KeyMonitor()
+
+    private let settings: FKeySettings
+    private let performer: (FKeyAction) -> Void
+    private let clock: () -> TimeInterval
+    private let dispatch: (@escaping () -> Void) -> Void
+
+    /// 每键独立的最近触发时间(v2:取代全局单一 lastFire)。
+    private var lastFireByKey: [FKeyAction: TimeInterval] = [:]
+    private let debounce: TimeInterval = 0.12
+
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private(set) var isRunning = false
+
+    // 诊断信息(供 UI 轮询显示)
+    private(set) var lastKeyCode: Int64 = -1
+    private(set) var lastTriggerDate: Date?
+    private(set) var lastAction: FKeyAction?
+
+    init(
+        settings: FKeySettings = FKeySettings(),
+        performer: @escaping (FKeyAction) -> Void = SystemEventPoster.post,
+        clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        dispatch: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
+    ) {
+        self.settings = settings
+        self.performer = performer
+        self.clock = clock
+        self.dispatch = dispatch
+    }
+
+    // MARK: 启停
+
+    @discardableResult
+    func start() -> Bool {
+        if isRunning { return true }
+        log.info("start: inputMonitoring=\(CGPreflightListenEventAccess()) postingAccess=\(CGPreflightPostEventAccess())")
+
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+            | CGEventMask(1 << CGEventType.keyUp.rawValue)
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: keyMonitorTapCallback,
+            userInfo: nil
+        ) else {
+            log.error("tapCreate 失败:通常是没有“输入监控”权限")
+            return false
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        eventTap = tap
+        runLoopSource = source
+        isRunning = true
+        log.info("事件钩子已启动")
+        return true
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        runLoopSource = nil
+        eventTap = nil
+        isRunning = false
+        log.info("事件钩子已停止")
+    }
+
+    /// 仅供测试:绕过权限直接置为运行态。
+    func startIfPossibleForTesting() {
+        isRunning = true
+    }
+
+    // MARK: 事件处理(在主 RunLoop 线程)
+
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // v2 自愈:系统因回调超时禁用 tap 时,立即重新启用。
+        if type == .tapDisabledByTimeout {
+            if let tap = eventTap, !CGEventTapIsEnabled(tap) {
+                CGEventTapEnable(tap, true)
+                log.notice("事件钩子被系统超时禁用,已自动重新启用")
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        // v2:权限被吊销 → 如实置为未运行(UI 会显示并可引导重新授权)。
+        if type == .tapDisabledByUserInput {
+            stop()
+            log.error("事件钩子被系统禁用(权限变动),已停止监听")
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyDown {
+            lastKeyCode = keyCode
+        }
+        guard keyCode >= 0 else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // v2 总开关:关闭时放行所有键(读注入的 defaults,保证可测)。
+        guard settings.masterEnabled else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard let action = FKeyAction.allCases.first(where: { $0.keyCode == keyCode }),
+              settings.isInterceptable(action) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // 命中已启用的 F 键:吞掉,不让它进入任何 App。
+        if type == .keyDown {
+            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if !isRepeat || action.isRepeatable {
+                if shouldFire(action) {
+                    lastTriggerDate = Date()
+                    lastAction = action
+                    log.info("检测到 \(action.keyLabel)(键码 \(keyCode)),执行 \(action.rawValue)")
+                    fire(action)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// v2:节流按键独立,只压制同一键的密集重复。
+    private func shouldFire(_ action: FKeyAction) -> Bool {
+        let now = clock()
+        if let last = lastFireByKey[action], now - last <= debounce {
+            return false
+        }
+        lastFireByKey[action] = now
+        return true
+    }
+
+    private func fire(_ action: FKeyAction) {
+        dispatch { [performer] in
+            performer(action)
+        }
+    }
+}
+
+/// 必须用顶层函数传给 C 回调(不能是带捕获上下文的闭包)。
+private func keyMonitorTapCallback(
+    _ proxy: CGEventTapProxy,
+    _ type: CGEventType,
+    _ event: CGEvent,
+    _ userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    return KeyMonitor.shared.handle(type: type, event: event)
+}
+```
+
+与原实现的差异清单(自检):自愈分支、吊销分支、masterEnabled 分支、`settings.isInterceptable`(死键防护)、`lastFireByKey` 字典、注入点(settings/performer/clock/dispatch)、`perform`/`postMissionControl`/`postSpotlight` 等已移至 SystemEventPoster。
+
+- [ ] **Step 4: 运行全部测试确认通过**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "Test Case|TEST" | tail -20`
+Expected: 新增 10 个 KeyMonitor 测试全部 passed,`TEST SUCCEEDED`
+
+- [ ] **Step 5: 构建整个 App 确认无残留引用**
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`(ContentView 里对已删 API 的调用若报错,改为编译通过的最小调用:`KeyMonitor.shared.start()`、`KeyMonitor.shared.isRunning`、`KeyMonitor.shared.lastKeyCode`、`KeyMonitor.shared.lastAction`、`KeyMonitor.shared.lastTriggerDate` 保留;逐键开关相关 UI 改用 `FKeySettings()`:`FKeySettings().enabled.contains(action)` / `FKeySettings().setEnabled(action, on)` / `FKeySettings().resetToDefaults()`。此处只求编译,完整 UI 重做在 Task 9。)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add EasyMacKBControl EasyMacKBControlTests
+git commit -m "fix: 钩子超时自愈、权限吊销如实停机、每键独立节流、全局总开关"
+```
+
+---
+
+### Task 6: Python 绘制图标(App 图标 + 状态栏模板图)
+
+**Files:**
+- Create: `tools/make_icons.py`
+- Create: `tools/.venv`(本地安装,不提交;`tools/.gitignore` 内忽略)
+- Create: `tools/.gitignore`
+- Create: `EasyMacKBControl/Assets.xcassets/AppIcon.appiconset/`(Contents.json + 11 个 PNG)
+- Create: `EasyMacKBControl/Assets.xcassets/StatusBarIcon.imageset/`(Contents.json + 2 个 PNG)
+
+**Interfaces:**
+- Consumes: Task 1 的 `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`
+- Produces: `NSImage(named: "StatusBarIcon")`(Task 7 菜单栏使用,模板图);App 图标经 asset catalog 编译生效
+
+- [ ] **Step 1: 建 venv 装 Pillow**
+
+```bash
+cd /Users/daixingwen/Documents/Code/iOSWrokSpace/EasyMacKBControl
+python3 -m venv tools/.venv
+tools/.venv/bin/pip install Pillow
+```
+
+Expected: `Successfully installed Pillow-...`
+
+- [ ] **Step 2: 创建 tools/.gitignore**
+
+```
+.venv/
+```
+
+- [ ] **Step 3: 编写 tools/make_icons.py**
+
+```python
+#!/usr/bin/env python3
+"""生成 EasyMacKBControl 的 App 图标与状态栏模板图。
+
+用法:tools/.venv/bin/python tools/make_icons.py
+设计:深蓝紫渐变底 + 白色键帽 + "F" 字样(macOS Big Sur+ 圆角矩形规范)。
+"""
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "EasyMacKBControl" / "Assets.xcassets"
+
+# 配色
+BG_TOP = (94, 92, 230)      # 亮靛蓝 #5E5CE6
+BG_BOTTOM = (44, 42, 110)   # 深靛紫 #2C2A6E
+CAP_TOP = (255, 255, 255)
+CAP_BOTTOM = (232, 232, 240)
+GLYPH = (59, 56, 168)       # 键帽上的 "F"
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont:
+    for candidate in [
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/System.ttf",
+    ]:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    raise SystemExit("找不到可用系统字体(SFNS/Helvetica)")
+
+
+def vertical_gradient(size, top, bottom):
+    img = Image.new("RGB", (size, size))
+    draw = ImageDraw.Draw(img)
+    for y in range(size):
+        t = y / max(size - 1, 1)
+        color = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+        draw.line([(0, y), (size, y)], fill=color)
+    return img
+
+
+def draw_app_icon(size: int) -> Image.Image:
+    """返回指定尺寸的 App 图标(透明边距 + 圆角)。"""
+    s = 1024  # 一律先画母版再缩放,保证各尺寸一致
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+
+    # 母版:1024 画布,图标 824×824 居中,圆角 185
+    margin = 100
+    radius = 185
+    bbox = [margin, margin, s - margin, s - margin]
+
+    # 键帽投影(柔和,向下偏移)
+    shadow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        [margin + 12, margin + 30, s - margin + 12, s - margin + 30],
+        radius=radius, fill=(20, 18, 60, 110))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(28))
+    img = Image.alpha_composite(img, shadow)
+
+    # 渐变底 + 圆角裁剪
+    grad = vertical_gradient(s, BG_TOP, BG_BOTTOM).convert("RGBA")
+    mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(bbox, radius=radius, fill=255)
+    img.paste(grad, (0, 0), mask)
+
+    # 白色键帽(居中 520×520,圆角 108),微渐变增加体积感
+    cap_bbox = [252, 252, 772, 772]
+    cap_mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(cap_mask).rounded_rectangle(cap_bbox, radius=108, fill=255)
+    cap = vertical_gradient(s, CAP_TOP, CAP_BOTTOM).convert("RGBA")
+    img.paste(cap, (0, 0), cap_mask)
+
+    # 键帽顶部高光线
+    highlight = ImageDraw.Draw(img)
+    highlight.rounded_rectangle(
+        [cap_bbox[0] + 26, cap_bbox[1] + 22, cap_bbox[2] - 26, cap_bbox[1] + 34],
+        radius=6, fill=(255, 255, 255, 200))
+
+    # "F" 字样
+    font = load_font(340)
+    d = ImageDraw.Draw(img)
+    d.text((512, 540), "F", font=font, fill=GLYPH + (255,), anchor="mm")
+
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def draw_status_icon(size: int) -> Image.Image:
+    """状态栏模板图:纯黑 + alpha,系统自动适配明暗。先画 36 再缩放。"""
+    s = 36
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([2, 7, 34, 29], radius=6, fill=(0, 0, 0, 255))
+    font = load_font(15)
+    d.text((18, 18), "fn", font=font, fill=(255, 255, 255, 255), anchor="mm")
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def save(img: Image.Image, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
+
+
+def build_app_icon():
+    out = ASSETS / "AppIcon.appiconset"
+    entries = []
+    # macOS AppIcon 标准 10 槽位:(逻辑尺寸, 倍率),文件像素 = 逻辑 × 倍率
+    for logical, scale in [
+        (16, 1), (16, 2), (32, 1), (32, 2), (128, 1),
+        (128, 2), (256, 1), (256, 2), (512, 1), (512, 2),
+    ]:
+        physical = logical * scale
+        name = f"appicon_{logical}x{logical}@{scale}x.png"
+        save(draw_app_icon(physical), out / name)
+        entries.append(
+            {"filename": name, "idiom": "mac", "scale": f"{scale}x",
+             "size": f"{logical}x{logical}"})
+    contents = {"images": entries,
+                "info": {"author": "xcode", "version": 1}}
+    (out / "Contents.json").write_text(__import__("json").dumps(contents, indent=2))
+    print(f"AppIcon: {len(entries)} 张 → {out}")
+
+
+def build_status_icon():
+    out = ASSETS / "StatusBarIcon.imageset"
+    save(draw_status_icon(18), out / "statusbar_18.png")
+    save(draw_status_icon(36), out / "statusbar_36.png")
+    contents = {
+        "images": [
+            {"filename": "statusbar_18.png", "idiom": "universal", "scale": "1x"},
+            {"filename": "statusbar_36.png", "idiom": "universal", "scale": "2x"},
+        ],
+        "info": {"author": "xcode", "version": 1},
+        "properties": {"template-rendering-intent": "template"},
+    }
+    (out / "Contents.json").write_text(__import__("json").dumps(contents, indent=2))
+    print(f"StatusBarIcon: 2 张 → {out}")
+
+
+if __name__ == "__main__":
+    build_app_icon()
+    build_status_icon()
+    print("完成")
+```
+
+注意 appiconset 尺寸表:`(size, scale)` 中 `scale=2` 的条目文件是物理像素、`size` 字段填逻辑尺寸(如 32px 文件 → `"16x16" @2x`),上面代码已按此换算,共 10 张。
+
+- [ ] **Step 4: 运行脚本**
+
+Run: `tools/.venv/bin/python tools/make_icons.py`
+Expected: 打印 `AppIcon: 10 张 → ...`、`StatusBarIcon: 2 张 → ...`、`完成`
+
+Run: `ls EasyMacKBControl/Assets.xcassets/AppIcon.appiconset/ | wc -l` → 11(10 PNG + Contents.json)
+
+- [ ] **Step 5: 构建并确认图标进产物**
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`
+
+Run: `ls ~/Library/Developer/Xcode/DerivedData/EasyMacKBControl-*/Build/Products/Debug/EasyMacKBControl.app/Contents/Resources/ | grep -i icon`
+Expected: 存在 `AppIcon.icns`(名字可能带 hash 后缀)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tools EasyMacKBControl/Assets.xcassets
+git commit -m "feat: Python 绘制 App 图标与状态栏模板图(脚本入库可复现)"
+```
+
+---
+
+### Task 7: MenuBarController(状态栏图标与菜单)
+
+**Files:**
+- Create: `EasyMacKBControl/MenuBar/MenuBarController.swift`
+- Create: `EasyMacKBControl/App/LaunchAtLogin.swift`
+
+**Interfaces:**
+- Consumes: `Prefs`(Task 3)、`NSImage(named: "StatusBarIcon")`(Task 6)、`KeyMonitor.shared`(Task 5)、`Notification.Name.openSettings`(Task 3)
+- Produces(Task 8/9 依赖):
+  - `final class MenuBarController` — `static let shared`;`func updateVisibility()`(读 `Prefs.showInMenuBar` 决定创建/移除 NSStatusItem)
+  - `enum LaunchAtLogin` — `static var isEnabled: Bool`(查 `SMAppService.mainApp.status`);`static func setEnabled(_ on: Bool) throws`(register/unregister)
+
+- [ ] **Step 1: 创建 App/LaunchAtLogin.swift**
+
+```swift
+import ServiceManagement
+
+/// 开机自启(macOS 13+ SMAppService)。
+enum LaunchAtLogin {
+    static var isEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    static func setEnabled(_ on: Bool) throws {
+        if on {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+}
+```
+
+- [ ] **Step 2: 创建 MenuBar/MenuBarController.swift**
+
+```swift
+import AppKit
+import OSLog
+
+private let log = Logger(subsystem: "EasyMacKBControl", category: "MenuBar")
+
+/// 状态栏图标与菜单。菜单在每次展开时重建(menuNeedsUpdate),保证权限/开关状态实时。
+final class MenuBarController: NSObject {
+    static let shared = MenuBarController()
+
+    private var statusItem: NSStatusItem?
+
+    /// 依据 Prefs.showInMenuBar 创建或移除状态栏项。
+    /// 由启动流程(Task 8)与设置界面(Task 9)在开关变化时调用。
+    func updateVisibility() {
+        let show = Prefs.showInMenuBar()
+        if show, statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.image = NSImage(named: "StatusBarIcon")
+            let menu = NSMenu()
+            menu.delegate = self
+            item.menu = menu
+            statusItem = item
+        } else if !show, let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
+    }
+
+    // MARK: - 菜单动作(目标动作必须在 NSObject 上)
+
+    @objc private func toggleMaster(_ sender: NSMenuItem) {
+        let on = !Prefs.masterEnabled()
+        UserDefaults.standard.set(on, forKey: Prefs.masterEnabled)
+    }
+
+    @objc private func openSettings() {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            try LaunchAtLogin.setEnabled(sender.state != .on)
+        } catch {
+            log.error("切换开机自启失败: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func openPrivacySettings() {
+        // 输入监控面板
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+extension MenuBarController: NSMenuDelegate {
+    /// 每次展开时重建,状态永远新鲜。
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let canListen = CGPreflightListenEventAccess()
+        let canPost = CGPreflightPostEventAccess()
+        let monitoring = KeyMonitor.shared.isRunning
+
+        let statusLine: NSMenuItem
+        if canListen && canPost && monitoring {
+            statusLine = NSMenuItem(title: "✓ 运行中", action: nil, keyEquivalent: "")
+        } else if !canListen || !canPost {
+            statusLine = NSMenuItem(title: "⚠️ 缺少权限,点击前往系统设置", action: #selector(openPrivacySettings), keyEquivalent: "")
+        } else {
+            statusLine = NSMenuItem(title: "⚠️ 监听未启动", action: #selector(openSettings), keyEquivalent: "")
+        }
+        menu.addItem(statusLine)
+        menu.addItem(.separator())
+
+        let master = NSMenuItem(title: "启用 F 键转换",
+                                action: #selector(toggleMaster(_:)),
+                                keyEquivalent: "")
+        master.target = self
+        master.state = Prefs.masterEnabled() ? .on : .off
+        menu.addItem(master)
+        menu.addItem(.separator())
+
+        let settings = NSMenuItem(title: "打开设置…",
+                                  action: #selector(openSettings),
+                                  keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
+        let login = NSMenuItem(title: "开机自启",
+                               action: #selector(toggleLaunchAtLogin(_:)),
+                               keyEquivalent: "")
+        login.target = self
+        login.state = LaunchAtLogin.isEnabled ? .on : .off
+        menu.addItem(login)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "退出 EasyMacKBControl",
+                                  action: #selector(quit),
+                                  keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
+}
+```
+
+- [ ] **Step 3: 构建验证**
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add EasyMacKBControl
+git commit -m "feat: 状态栏图标与菜单(状态/总开关/设置/自启/退出)+ 开机自启封装"
+```
+
+---
+
+### Task 8: 生命周期(AppAppearance / AppDelegate / App 入口)
+
+**Files:**
+- Create: `EasyMacKBControl/App/AppAppearance.swift`
+- Create: `EasyMacKBControl/App/AppDelegate.swift`
+- Create: `EasyMacKBControl/App/EasyMacKBControlApp.swift`(替代 MyApp.swift)
+- Delete: `EasyMacKBControl/MyApp.swift`
+- Test: `EasyMacKBControlTests/AppAppearanceTests.swift`
+
+**Interfaces:**
+- Consumes: `Prefs`(Task 3)、`KeyMonitor.shared`(Task 5)、`MenuBarController.shared`(Task 7)
+- Produces(Task 9 依赖):
+  - `enum AppAppearance` — `static func activationPolicy(showInDock: Bool) -> NSApplication.ActivationPolicy`;`static func apply(showInDock: Bool)`
+  - `final class AppDelegate: NSObject, NSApplicationDelegate`(经 `@NSApplicationDelegateAdaptor` 注入)
+  - App 入口 `WindowGroup(id: "settings")`,监听 `.openSettings` 通知调用 `openWindow(id: "settings")`
+
+- [ ] **Step 1: 写失败测试**
+
+创建 `EasyMacKBControlTests/AppAppearanceTests.swift`:
+
+```swift
+import AppKit
+import XCTest
+@testable import EasyMacKBControl
+
+final class AppAppearanceTests: XCTestCase {
+    func testActivationPolicyMapping() {
+        XCTAssertEqual(AppAppearance.activationPolicy(showInDock: true), .regular)
+        XCTAssertEqual(AppAppearance.activationPolicy(showInDock: false), .accessory)
+    }
+}
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "error" | head -3`
+Expected: `cannot find 'AppAppearance' in scope` — TEST FAILED
+
+- [ ] **Step 3: 创建 App/AppAppearance.swift**
+
+```swift
+import AppKit
+
+/// Dock 显示形态切换。LSUIElement=YES 使 App 以 accessory 启动;
+/// 用户选择“在程序坞显示”时运行时升级为 regular。
+enum AppAppearance {
+    static func activationPolicy(showInDock: Bool) -> NSApplication.ActivationPolicy {
+        showInDock ? .regular : .accessory
+    }
+
+    static func apply(showInDock: Bool) {
+        NSApp.setActivationPolicy(activationPolicy(showInDock: showInDock))
+    }
+}
+```
+
+- [ ] **Step 4: 创建 App/AppDelegate.swift**
+
+```swift
+import AppKit
+import OSLog
+
+private let log = Logger(subsystem: "EasyMacKBControl", category: "AppDelegate")
+
+/// 生命周期:启动即工作(不依赖窗口)、关窗不退出、重新打开找回设置。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppAppearance.apply(showInDock: Prefs.showInDock())
+        MenuBarController.shared.updateVisibility()
+        if !KeyMonitor.shared.start() {
+            log.notice("事件钩子未启动(等授权);授权后可在设置里手动启动")
+        }
+    }
+
+    /// 关闭最后一个窗口不退出 App(后台常驻的关键)。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    /// 双隐藏(Dock+状态栏都关)后的找回通道:再次打开 App 即弹出设置窗口。
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return true
+    }
+}
+```
+
+- [ ] **Step 5: 创建 App/EasyMacKBControlApp.swift 并删除 MyApp.swift**
+
+```swift
+import SwiftUI
+
+@main
+struct EasyMacKBControlApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    var body: some Scene {
+        WindowGroup(id: "settings") {
+            ContentView()
+                .frame(minWidth: 560, minHeight: 640)
+                .openSettingsOnNotification()
+        }
+        .windowResizability(.contentSize)
+    }
+}
+
+/// 监听 .openSettings 通知(菜单栏/重新打开触发)并打开设置窗口。
+private struct OpenSettingsListener: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            openWindow(id: "settings")
+        }
+    }
+}
+
+extension View {
+    func openSettingsOnNotification() -> some View {
+        modifier(OpenSettingsListener())
+    }
+}
+```
+
+(`ContentView` 仍是旧界面,Task 9 整体替换为 `SettingsView`。)
+
+```bash
+git rm EasyMacKBControl/MyApp.swift
+```
+
+- [ ] **Step 6: 运行全部测试 + 构建**
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "TEST" | tail -2`
+Expected: `TEST SUCCEEDED`
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' build 2>&1 | tail -2`
+Expected: `BUILD SUCCEEDED`
+
+- [ ] **Step 7: 手动冒烟(运行 App)**
+
+Run: `open ~/Library/Developer/Xcode/DerivedData/EasyMacKBControl-*/Build/Products/Debug/EasyMacKBControl.app`
+验收:①程序坞无图标、菜单栏出现 fn 图标;②点开菜单各条目存在;③关掉窗口后 fn 图标仍在;④在访达重新打开该 .app → 设置窗口弹出(双隐藏找回通道)。
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add EasyMacKBControl EasyMacKBControlTests
+git commit -m "feat: 启动即工作、关窗不退出、reopen 找回设置、Dock 形态切换"
+```
+
+---
+
+### Task 9: 设置界面三 Tab + 双语
+
+**Files:**
+- Create: `EasyMacKBControl/Settings/SettingsView.swift`
+- Create: `EasyMacKBControl/Settings/GeneralTab.swift`
+- Create: `EasyMacKBControl/Settings/KeyMappingTab.swift`
+- Create: `EasyMacKBControl/Settings/PermissionsTab.swift`
+- Create: `EasyMacKBControl/Localizable.xcstrings`
+- Modify: `EasyMacKBControl/App/EasyMacKBControlApp.swift`(ContentView → SettingsView)
+- Delete: `EasyMacKBControl/ContentView.swift`
+
+**Interfaces:**
+- Consumes: `FKeyAction`/`FKeySettings`/`Prefs`(Task 3)、`KeyMonitor.shared`(Task 5)、`MenuBarController.shared`/`LaunchAtLogin`(Task 7)、`AppAppearance`(Task 8)
+- Produces: `struct SettingsView: View`(App 唯一窗口)
+
+- [ ] **Step 1: 创建 Settings/SettingsView.swift**
+
+```swift
+import SwiftUI
+
+struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralTab()
+                .tabItem { Label("通用", systemImage: "gearshape") }
+            KeyMappingTab()
+                .tabItem { Label("按键映射", systemImage: "keyboard") }
+            PermissionsTab()
+                .tabItem { Label("权限与诊断", systemImage: "lock.shield") }
+        }
+        .padding(20)
+        .frame(minWidth: 560, minHeight: 640)
+    }
+}
+```
+
+- [ ] **Step 2: 创建 Settings/GeneralTab.swift**
+
+```swift
+import SwiftUI
+
+struct GeneralTab: View {
+    @AppStorage(Prefs.masterEnabled) private var masterEnabled = true
+    @AppStorage(Prefs.showInDock) private var showInDock = false
+    @AppStorage(Prefs.showInMenuBar) private var showInMenuBar = true
+    @State private var confirmHideAll = false
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var launchError: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("启用 F 键转换", isOn: $masterEnabled)
+            } header: {
+                Text("功能")
+            } footer: {
+                Text("关闭后所有按键原样放行,不再拦截任何 F 键")
+            }
+
+            Section {
+                Toggle("开机自启", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { on in
+                        do { try LaunchAtLogin.setEnabled(on) }
+                        catch {
+                            launchError = error.localizedDescription
+                            launchAtLogin = LaunchAtLogin.isEnabled
+                        }
+                    }
+                Toggle("在程序坞显示", isOn: $showInDock)
+                    .onChange(of: showInDock) { on in
+                        AppAppearance.apply(showInDock: on)
+                    }
+                Toggle("在状态栏显示图标", isOn: $showInMenuBar)
+                    .onChange(of: showInMenuBar) { on in
+                        MenuBarController.shared.updateVisibility()
+                        if !on && !showInDock { confirmHideAll = true }
+                    }
+            } header: {
+                Text("界面")
+            } footer: {
+                if let launchError {
+                    Text("开机自启设置失败:\(launchError)")
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("两者都关闭后,在启动台或访达中重新打开本 App 可找回设置")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 520)
+        .confirmationDialog("同时隐藏程序坞与状态栏?",
+                            isPresented: $confirmHideAll,
+                            titleVisibility: .visible) {
+            Button("仍然隐藏") { /* 状态已写入,无需回滚 */ }
+            Button("取消", role: .cancel) {
+                showInMenuBar = true
+                MenuBarController.shared.updateVisibility()
+            }
+        } message: {
+            Text("App 将不可见,但仍在后台工作;在启动台或访达重新打开本 App 可找回")
+        }
+    }
+}
+```
+
+- [ ] **Step 3: 创建 Settings/KeyMappingTab.swift**
+
+```swift
+import SwiftUI
+
+struct KeyMappingTab: View {
+    @State private var settings = FKeySettings()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("F 区功能映射").font(.headline)
+                Spacer()
+                Button("恢复默认") {
+                    settings.resetToDefaults()
+                }
+                .controlSize(.small)
+            }
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(FKeyAction.allCases) { action in
+                        fKeyRow(action)
+                    }
+                }
+            }
+
+            Text("开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 未提供公开接口,暂不支持。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(4)
+    }
+
+    private func fKeyRow(_ action: FKeyAction) -> some View {
+        HStack(spacing: 12) {
+            Text(action.keyLabel)
+                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                .frame(width: 44, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(action.supported
+                              ? Color.accentColor.opacity(0.15)
+                              : Color.secondary.opacity(0.12))
+                )
+            Text(action.title)
+                .foregroundStyle(action.supported ? .primary : .secondary)
+            Spacer()
+            if action.supported {
+                Toggle("", isOn: binding(for: action))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            } else {
+                Text("暂不支持")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func binding(for action: FKeyAction) -> Binding<Bool> {
+        Binding(
+            get: { settings.enabled.contains(action) },
+            set: { settings.setEnabled(action, $0) }
+        )
+    }
+}
+```
+
+注意:`@State private var settings = FKeySettings()` 包装的是实时读写 UserDefaults 的值类型;`setEnabled`/`resetToDefaults` 声明为 `mutating`(Task 3),因此 @State 会捕获 mutating 调用并触发视图刷新,开关状态不会与界面脱节。菜单栏对同一键的修改在下次 body 求值时自然同步。
+
+- [ ] **Step 4: 创建 Settings/PermissionsTab.swift(迁移旧 ContentView 的权限/诊断部分)**
+
+```swift
+import CoreGraphics
+import SwiftUI
+
+struct PermissionsTab: View {
+    @State private var canListen = false
+    @State private var canPost = false
+    @State private var tapRunning = false
+    @State private var message: String?
+
+    private let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Form {
+            Section {
+                statusRow(ok: canListen,
+                          text: canListen ? "输入监控:已授权" : "输入监控:未授权")
+                statusRow(ok: canPost,
+                          text: canPost ? "辅助功能:已授权" : "辅助功能:未授权")
+                statusRow(ok: tapRunning,
+                          text: tapRunning ? "事件监听中" : "事件监听未启动")
+            } header: {
+                Text("状态")
+            } footer: {
+                Text("授权后请完全退出并重新打开本 App 才会生效。从 Xcode 运行时权限偶发不生效,建议打包导出到 /Applications 后再授权。")
+            }
+
+            Section {
+                if !canPost {
+                    Button("授权辅助功能") { requestPostAccess() }
+                }
+                if !canListen {
+                    Button("请求输入监控权限") { requestListenAccess() }
+                }
+                Button(tapRunning ? "停止监听" : "开始监听") { toggleTap() }
+                if let message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("操作")
+            }
+
+            Section {
+                Text("最近按键码:\(KeyMonitor.shared.lastKeyCode)(-1 = 尚未收到)")
+                if let action = KeyMonitor.shared.lastAction {
+                    Text("上次触发:\(action.keyLabel) → \(action.title)")
+                }
+            } header: {
+                Text("诊断")
+            } footer: {
+                Text("按下的键若未显示在此,说明系统没有把该键交给我们(常见于妙控键盘的媒体层按键)")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 520)
+        .onAppear { refresh() }
+        .onReceive(timer) { _ in refresh() }
+    }
+
+    private func statusRow(ok: Bool, text: String) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(ok ? Color.green : Color.orange).frame(width: 10, height: 10)
+            Text(text)
+        }
+    }
+
+    private func refresh() {
+        canListen = CGPreflightListenEventAccess()
+        canPost = CGPreflightPostEventAccess()
+        tapRunning = KeyMonitor.shared.isRunning
+    }
+
+    private func requestListenAccess() {
+        _ = CGRequestListenEventAccess()
+        refresh()
+    }
+
+    private func requestPostAccess() {
+        _ = CGRequestPostEventAccess()
+        refresh()
+    }
+
+    private func toggleTap() {
+        if KeyMonitor.shared.isRunning {
+            KeyMonitor.shared.stop()
+        } else {
+            if !KeyMonitor.shared.start() {
+                message = "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。"
+            } else {
+                message = nil
+            }
+        }
+        refresh()
+    }
+}
+```
+
+- [ ] **Step 5: 切换 App 入口并删除旧界面**
+
+`EasyMacKBControl/App/EasyMacKBControlApp.swift` 中 `ContentView()` 改为 `SettingsView()`,并删掉 `.frame(minWidth: 560, minHeight: 640)`(已内置于 SettingsView):
+
+```bash
+git rm EasyMacKBControl/ContentView.swift
+```
+
+- [ ] **Step 6: 创建 EasyMacKBControl/Localizable.xcstrings(zh-Hans 源 + en)**
+
+```json
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "通用" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "General" } } } },
+    "按键映射" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Key Mapping" } } } },
+    "权限与诊断" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Permissions & Diagnostics" } } } },
+    "功能" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Function" } } } },
+    "启用 F 键转换" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable F-key translation" } } } },
+    "关闭后所有按键原样放行,不再拦截任何 F 键" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, all keys pass through untouched" } } } },
+    "界面" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interface" } } } },
+    "开机自启" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Launch at Login" } } } },
+    "在程序坞显示" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show in Dock" } } } },
+    "在状态栏显示图标" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show Menu Bar Icon" } } } },
+    "两者都关闭后,在启动台或访达中重新打开本 App 可找回设置" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "If both are hidden, reopen this app from Launchpad or Finder to get settings back" } } } },
+    "开机自启设置失败:%@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to set Launch at Login: %@" } } } },
+    "同时隐藏程序坞与状态栏?" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide both Dock icon and menu bar icon?" } } } },
+    "仍然隐藏" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide Anyway" } } } },
+    "取消" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } } },
+    "App 将不可见,但仍在后台工作;在启动台或访达重新打开本 App 可找回" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The app will be invisible but still running; reopen it from Launchpad or Finder to get it back" } } } },
+    "F 区功能映射" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "F-row Function Mapping" } } } },
+    "恢复默认" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore Defaults" } } } },
+    "暂不支持" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } } },
+    "开启后,该 F 键会被本 App 接管并转成对应系统功能;关闭则保持普通 F 键。注意:拦截对所有键盘生效(包括笔记本内置键盘)。F5(听写)与 F6(专注模式)因 macOS 未提供公开接口,暂不支持。" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "When enabled, this app intercepts the F key and performs the system function; when disabled it stays a normal F key. Note: interception applies to ALL keyboards, including the built-in one. F5 (Dictation) and F6 (Focus) are not supported — macOS has no public API." } } } },
+    "状态" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Status" } } } },
+    "输入监控:已授权" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Input Monitoring: granted" } } } },
+    "输入监控:未授权" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Input Monitoring: not granted" } } } },
+    "辅助功能:已授权" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accessibility: granted" } } } },
+    "辅助功能:未授权" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accessibility: not granted" } } } },
+    "事件监听中" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Event tap running" } } } },
+    "事件监听未启动" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Event tap not running" } } } },
+    "授权后请完全退出并重新打开本 App 才会生效。从 Xcode 运行时权限偶发不生效,建议打包导出到 /Applications 后再授权。" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "After granting, fully quit and reopen this app for it to take effect. Permissions can be flaky when running from Xcode — export to /Applications first." } } } },
+    "授权辅助功能" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Grant Accessibility" } } } },
+    "请求输入监控权限" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Request Input Monitoring" } } } },
+    "停止监听" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop Monitoring" } } } },
+    "开始监听" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start Monitoring" } } } },
+    "操作" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Actions" } } } },
+    "诊断" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Diagnostics" } } } },
+    "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to create event tap: enable this app under System Settings › Privacy & Security › Input Monitoring, then fully quit and reopen." } } } },
+    "按下的键若未显示在此,说明系统没有把该键交给我们(常见于妙控键盘的媒体层按键)" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "If a pressed key never shows up here, macOS didn't route it to us (common for Magic Keyboard media-layer keys)" } } } },
+    "✓ 运行中" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "✓ Running" } } } },
+    "⚠️ 缺少权限,点击前往系统设置" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "⚠️ Missing permission — click to open System Settings" } } } },
+    "⚠️ 监听未启动" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "⚠️ Not monitoring" } } } },
+    "打开设置…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings…" } } } },
+    "退出 EasyMacKBControl" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Quit EasyMacKBControl" } } } }
+  },
+  "version" : "1.0"
+}
+```
+
+(`最近按键码:%lld`、`上次触发:%@ → %@` 这类插值字符串由 SwiftUI 在运行时以 LocalizedStringKey 格式化,键即模板原文;上面诊断两行如需英文,把 `Text("最近按键码:\(...)")` 改为 `Text("最近按键码 \(KeyMonitor.shared.lastKeyCode)")` 形式的固定键并补两条条目即可——本任务保持中文原文显示,不阻塞。)
+
+- [ ] **Step 7: 构建 + 全部测试**
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "TEST" | tail -2`
+Expected: `TEST SUCCEEDED`
+
+- [ ] **Step 8: 手动验收(界面与双语)**
+
+1. 运行 App,三个 Tab 齐全、逐键开关可切换且重启保持
+2. `defaults write com.daixingwen.easymackbcontrol AppleLanguages -array en &&` 重新打开 → 界面英文;删掉该 default 恢复中文
+3. 通用页三个开关 + 开机自启工作正常;状态栏开关即时增删图标;程序坞开关即时显隐
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add EasyMacKBControl
+git commit -m "feat: 三 Tab 设置界面 + 中英双语文案,移除旧单屏界面"
+```
+
+---
+
+### Task 10: README / LICENSE / 全量验收
+
+**Files:**
+- Create: `README.md`
+- Create: `LICENSE`
+
+**Interfaces:**
+- Consumes: 前面所有任务的成品
+- Produces: 社区可用的仓库门面
+
+- [ ] **Step 1: 创建 LICENSE**
+
+```
+MIT License
+
+Copyright (c) 2026 daixingwen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+- [ ] **Step 2: 创建 README.md(双语)**
+
+````markdown
+# EasyMacKBControl
+
+把外接键盘的标准 F 键(如 HHKB 的 Fn+数字)转换成 macOS 妙控键盘 F 区等价的系统功能:亮度、调度中心、Spotlight、媒体控制、音量。菜单栏常驻、逐键开关、开机自启。
+
+Turns the standard F1–F12 keycodes sent by external keyboards (e.g. HHKB Fn+number) into the equivalent macOS media functions: brightness, Mission Control, Spotlight, media keys, volume. Menu-bar resident, per-key toggles, launch at login.
+
+## 功能 | Features
+
+- F1/F2 屏幕亮度、F3 调度中心、F4 聚焦搜索、F7–F9 媒体、F10–F12 音量
+- 每个键可独立开启/关闭,含全局总开关
+- 菜单栏常驻;可选显示程序坞图标、开机自启
+- 中英双语
+
+## 安装 | Install
+
+从源码构建(或从 Releases 下载):
+
+```bash
+git clone <repo>
+cd EasyMacKBControl
+xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -configuration Release build
+```
+
+把 `build/Release/EasyMacKBControl.app` 拖进 `/Applications` 后运行。
+
+## 授权 | Permissions
+
+首次运行需要两项授权(系统会弹窗):
+
+1. **输入监控**(读取按键)与 **辅助功能**(发送系统事件):
+   系统设置 → 隐私与安全性 → 分别勾选 EasyMacKBControl
+2. 授权后**完全退出并重新打开** App 才生效
+
+## 使用说明 | Notes
+
+- 本 App 只拦截**标准 F 键码**。妙控键盘/笔记本键盘在媒体层发出的按键不经过本 App,不受影响。
+- 若系统开启"将 F1、F2 等键用作标准功能键",则**所有键盘**(包括内置键盘)的 F 键都会被拦截转换——用不到时请关闭对应键的开关。
+- F5(听写)与 F6(专注模式)无公开 API,暂不支持,保持普通 F 键。
+
+## 已知限制 | Known Limitations
+
+- F4 依赖系统默认的 Spotlight 快捷键(⌘空格);改过快捷键则 F4 无效
+- 亮度控制只对内建/Apple 显示器有效,第三方外接屏不响应(系统行为)
+- 无法区分按键来自哪块键盘
+
+## 开发 | Development
+
+```bash
+xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS'
+```
+
+- 设计文档:`docs/superpowers/specs/`
+- 图标脚本:`tools/make_icons.py`(`tools/.venv/bin/python tools/make_icons.py` 复现)
+- 发布自行分发请配置 Developer ID 签名并公证:`codesign` + `xcrun notarytool`
+
+## License
+
+MIT
+````
+
+(截图位:发布前在 README 顶部补 1–2 张界面截图,人工步骤,不阻塞。)
+
+- [ ] **Step 3: 全量验证**
+
+Run: `xcodebuild -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -configuration Release -destination 'platform=macOS' build 2>&1 | tail -3`
+Expected: `BUILD SUCCEEDED`
+
+Run: `xcodebuild test -project EasyMacKBControl.xcodeproj -scheme EasyMacKBControl -destination 'platform=macOS' 2>&1 | grep -E "Executed|TEST" | tail -4`
+Expected: `Executed N tests, with 0 failures`,`TEST SUCCEEDED`
+
+- [ ] **Step 4: 人工验收清单(spec §9)**
+
+把 Release 产物拷到 /Applications 运行,逐项勾选:
+
+- [ ] 全部 F1–F12(除 F5/F6)实测生效
+- [ ] 关窗后 F 键仍生效;⌘Q 后不再拦截
+- [ ] 隐藏 Dock + 隐藏状态栏 → 出现确认弹窗;从启动台/访达重新打开能找回设置
+- [ ] 程序坞/状态栏开关即时生效,重启 App 后保持
+- [ ] 开机自启注册/取消生效(重启验证)
+- [ ] 菜单栏总开关暂停后不拦截任何键,菜单状态实时
+- [ ] 挂机 ≥1 小时后 F 键仍生效(自愈验证)
+- [ ] 系统语言切 English 后界面完整英文
+- [ ] 菜单栏图标在明/暗菜单栏下均清晰(模板图自适配)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add README.md LICENSE
+git commit -m "docs: README(双语)与 MIT LICENSE"
+```
+
+---
+
+## 计划自审记录
+
+1. **Spec 覆盖**:§4.1 结构→Task 3/4/5/7/8/9;§4.2 生命周期→Task 8;§4.3 菜单→Task 7;§5 设置 UI→Task 9;§6 修复 1/2/3→Task 5,4/5→Task 1,6→Task 9 文案+README;§7 图标→Task 6;§8 发布要素→Task 1/9/10;§9 测试→各任务 Step 1 + Task 10。无遗漏。
+2. **占位符扫描**:无 TBD/TODO;所有代码步骤给出全量代码。
+3. **类型一致性**:`FKeySettings.isInterceptable`/`setEnabled(_:_:)`、`Prefs.masterEnabled()`、`SystemEventPoster.post(_:)`、`MenuBarController.updateVisibility()`、`LaunchAtLogin.setEnabled(_:)`、`AppAppearance.apply(showInDock:)` 各任务间签名一致。
+4. **Review Focus**:5 项均已落到 Task 5/8 的具体测试或 Task 10 的人工验收。
+
+自审中发现并已修正的问题:
+- 测试 target 缺 `DEVELOPMENT_TEAM` / `ENABLE_TESTING_SEARCH_PATHS`(XCTest 链接与签名)
+- KeyMonitor 总开关若读 `Prefs.masterEnabled()`(固定 .standard)会让注入测试失败 → `FKeySettings.masterEnabled` 走注入 defaults
+- `setEnabled`/`resetToDefaults` 非 mutating 时,@State 的 KeyMappingTab 开关会与界面脱节 → 改 mutating
+- appiconset 尺寸表混入 64×64@1x、1024×1024@1x 两个非标准槽位 → 改为标准 10 槽位
