@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 // MARK: - F 区功能定义
 
@@ -59,8 +60,13 @@ enum FKeyAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 中文描述。
+    /// 功能描述（本地化：跟随系统语言，英文翻译见 Localizable.xcstrings）。
     var title: String {
+        String(localized: String.LocalizationValue(titleKey), bundle: .main)
+    }
+
+    /// 本地化键（源语言为简体中文）。internal 供测试验证英文翻译齐全。
+    var titleKey: String {
         switch self {
         case .brightnessDown: return "降低屏幕亮度"
         case .brightnessUp:   return "提高屏幕亮度"

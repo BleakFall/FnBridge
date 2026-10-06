@@ -14,11 +14,11 @@ struct PermissionsTab: View {
         Form {
             Section {
                 statusRow(ok: canListen,
-                          text: canListen ? "输入监控:已授权" : "输入监控:未授权")
+                          text: canListen ? String(localized: "输入监控:已授权") : String(localized: "输入监控:未授权"))
                 statusRow(ok: canPost,
-                          text: canPost ? "辅助功能:已授权" : "辅助功能:未授权")
+                          text: canPost ? String(localized: "辅助功能:已授权") : String(localized: "辅助功能:未授权"))
                 statusRow(ok: tapRunning,
-                          text: tapRunning ? "事件监听中" : "事件监听未启动")
+                          text: tapRunning ? String(localized: "事件监听中") : String(localized: "事件监听未启动"))
             } header: {
                 Text("状态")
             } footer: {
@@ -44,9 +44,9 @@ struct PermissionsTab: View {
             }
 
             Section {
-                Text("最近按键码:\(KeyMonitor.shared.lastKeyCode)(-1 = 尚未收到)")
+                Text(String(format: String(localized: "最近按键码:%lld(-1 = 尚未收到)"), KeyMonitor.shared.lastKeyCode))
                 if let action = KeyMonitor.shared.lastAction {
-                    Text("上次触发:\(action.keyLabel) → \(action.title)")
+                    Text(String(format: String(localized: "上次触发:%@ → %@"), action.keyLabel, action.title))
                 }
             } header: {
                 Text("诊断")
@@ -88,7 +88,7 @@ struct PermissionsTab: View {
             KeyMonitor.shared.stop()
         } else {
             if !KeyMonitor.shared.start() {
-                message = "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。"
+                message = String(localized: "事件钩子创建失败:请在“系统设置 → 隐私与安全性 → 输入监控”勾选本 App,然后完全退出重开。")
             } else {
                 message = nil
             }

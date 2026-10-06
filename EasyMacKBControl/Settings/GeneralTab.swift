@@ -40,7 +40,7 @@ struct GeneralTab: View {
                 Text("界面")
             } footer: {
                 if let launchError {
-                    Text("开机自启设置失败:\(launchError)")
+                    Text(String(format: String(localized: "开机自启设置失败:%@"), launchError))
                         .foregroundStyle(.orange)
                 } else {
                     Text("两者都关闭后,在启动台或访达中重新打开本 App 可找回设置")
