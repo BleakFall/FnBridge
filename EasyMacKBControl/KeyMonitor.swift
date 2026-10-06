@@ -3,63 +3,6 @@ import OSLog
 
 private let log = Logger(subsystem: "EasyMacKBControl", category: "KeyMonitor")
 
-// MARK: - 系统事件发送
-
-/// 系统定义事件中的“辅助控制键”码（即 IOKit 的 NX_KEYTYPE_* 常量）。
-/// 发送这些事件的效果等价于按下妙控键盘上的专用键（亮度 / 音量 / 媒体）。
-private enum AuxControlKey {
-    static let soundUp: Int32 = 0
-    static let soundDown: Int32 = 1
-    static let brightnessUp: Int32 = 2
-    static let brightnessDown: Int32 = 3
-    static let mute: Int32 = 7
-    static let play: Int32 = 16
-    static let next: Int32 = 17
-    static let previous: Int32 = 18
-    static let fast: Int32 = 19
-    static let rewind: Int32 = 20
-}
-
-/// 发送一个系统定义“辅助控制键”（按下 + 抬起）。
-/// 需要“辅助功能”权限（否则 post 到 HID 会被系统忽略）。
-private func postAuxKey(_ key: Int32) {
-    postAuxKeyEvent(key, down: true)
-    postAuxKeyEvent(key, down: false)
-}
-
-private func postAuxKeyEvent(_ key: Int32, down: Bool) {
-    // data1 = (keyCode << 16) | (0xA00 按下 / 0xB00 抬起)
-    let data1 = Int(key) << 16 | (down ? 0xA00 : 0xB00)
-    let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
-    guard let event = NSEvent.otherEvent(
-        with: .systemDefined,
-        location: .zero,
-        modifierFlags: flags,
-        timestamp: 0,
-        windowNumber: 0,
-        context: nil,
-        subtype: 8,            // NX_SUBTYPE_AUX_CONTROL_BUTTONS
-        data1: data1,
-        data2: -1
-    ) else {
-        log.error("构造系统定义事件失败")
-        return
-    }
-    event.cgEvent?.post(tap: .cghidEventTap)
-}
-
-/// 发送 ⌘+空格 唤起聚焦搜索（Spotlight）。F4 的等价操作。
-private func postSpotlight() {
-    let source = CGEventSource(stateID: .hidSystemState)
-    let space: CGKeyCode = 49   // kVK_Space
-    let down = CGEvent(keyboardEventSource: source, virtualKey: space, keyDown: true)
-    down?.flags = .maskCommand
-    down?.post(tap: .cghidEventTap)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: space, keyDown: false)
-    up?.flags = .maskCommand
-    up?.post(tap: .cghidEventTap)
-}
-
 // MARK: - 监听器
 
 /// 全局事件钩子：把“标准 F 键码”转换成 macOS 系统功能。
@@ -177,39 +120,7 @@ final class KeyMonitor {
     }
 
     private static func perform(_ action: FKeyAction) {
-        switch action {
-        case .brightnessDown: postAuxKey(AuxControlKey.brightnessDown)
-        case .brightnessUp:   postAuxKey(AuxControlKey.brightnessUp)
-        case .missionControl: postMissionControl()
-        case .spotlight:      postSpotlight()
-        case .previousTrack:  postAuxKey(AuxControlKey.previous)
-        case .playPause:      postAuxKey(AuxControlKey.play)
-        case .nextTrack:      postAuxKey(AuxControlKey.next)
-        case .mute:           postAuxKey(AuxControlKey.mute)
-        case .volumeDown:     postAuxKey(AuxControlKey.soundDown)
-        case .volumeUp:       postAuxKey(AuxControlKey.soundUp)
-        case .dictation, .focus:
-            log.notice("动作 \(action.rawValue) 暂无公开接口，忽略")
-        }
-    }
-
-    /// 唤起调度中心。
-    ///
-    /// 启动系统自带的 launcher `/System/Applications/Mission Control.app`
-    /// （bundle id: com.apple.exposelauncher）。它内部调用私有
-    /// `CoreDockSendNotification("com.apple.expose.awake", 0)` 让 Dock 切换调度中心，
-    /// 与苹果键盘 F3 走同一通道。
-    private static func postMissionControl() {
-        let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = false
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-            if let error {
-                log.error("启动 Mission Control.app 失败: \(error.localizedDescription)")
-            } else {
-                log.info("已通过系统 Mission Control.app 唤起调度中心")
-            }
-        }
+        SystemEventPoster.post(action)
     }
 }
 
