@@ -6,8 +6,7 @@ struct EasyMacKBControlApp: App {
 
     var body: some Scene {
         WindowGroup(id: "settings") {
-            ContentView()
-                .frame(minWidth: 560, minHeight: 640)
+            SettingsView()
                 .openSettingsOnNotification()
         }
         .windowResizability(.contentSize)
