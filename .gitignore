@@ -1,5 +1,8 @@
 # macOS
 .DS_Store
 
+# Xcode 构建产物
+build/
+
 # Claude Code 本地配置(个人权限/设置,不入库)
 .claude/
