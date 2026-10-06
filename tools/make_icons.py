@@ -43,58 +43,41 @@ def vertical_gradient(size, top, bottom):
 
 
 def draw_app_icon(size: int) -> Image.Image:
-    """返回指定尺寸的 App 图标(透明边距 + 圆角)。"""
+    """返回指定尺寸的 App 图标(macOS Big Sur+ 规范:全幅不透明、系统叠加圆角)。"""
     s = 1024  # 一律先画母版再缩放,保证各尺寸一致
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
 
-    # 母版:1024 画布,图标 824×824 居中,圆角 185
-    margin = 100
-    radius = 185
-    bbox = [margin, margin, s - margin, s - margin]
-
-    # 键帽投影(柔和,向下偏移)
-    shadow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle(
-        [margin + 12, margin + 30, s - margin + 12, s - margin + 30],
-        radius=radius, fill=(20, 18, 60, 110))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(28))
-    img = Image.alpha_composite(img, shadow)
-
-    # 渐变底 + 圆角裁剪
-    grad = vertical_gradient(s, BG_TOP, BG_BOTTOM).convert("RGBA")
-    mask = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(bbox, radius=radius, fill=255)
-    img.paste(grad, (0, 0), mask)
+    # 全幅渐变底(不透明、铺满画布;圆角由 macOS 自行裁剪,勿烘焙透明边角)
+    img = vertical_gradient(s, BG_TOP, BG_BOTTOM).convert("RGB")
 
     # 白色键帽(居中 520×520,圆角 108),微渐变增加体积感
     cap_bbox = [252, 252, 772, 772]
+    cap = vertical_gradient(s, CAP_TOP, CAP_BOTTOM).convert("RGB")
     cap_mask = Image.new("L", (s, s), 0)
     ImageDraw.Draw(cap_mask).rounded_rectangle(cap_bbox, radius=108, fill=255)
-    cap = vertical_gradient(s, CAP_TOP, CAP_BOTTOM).convert("RGBA")
     img.paste(cap, (0, 0), cap_mask)
-
-    # 键帽顶部高光线
-    highlight = ImageDraw.Draw(img)
-    highlight.rounded_rectangle(
-        [cap_bbox[0] + 26, cap_bbox[1] + 22, cap_bbox[2] - 26, cap_bbox[1] + 34],
-        radius=6, fill=(255, 255, 255, 200))
 
     # "F" 字样
     font = load_font(340)
     d = ImageDraw.Draw(img)
-    d.text((512, 540), "F", font=font, fill=GLYPH + (255,), anchor="mm")
+    d.text((512, 540), "F", font=font, fill=GLYPH, anchor="mm")
 
     return img.resize((size, size), Image.LANCZOS)
 
 
 def draw_status_icon(size: int) -> Image.Image:
-    """状态栏模板图:纯黑 + alpha,系统自动适配明暗。先画 36 再缩放。"""
+    """状态栏模板图:黑块 + "fn" 字形镂空(alpha 0),系统按 alpha 适配明暗。先画 36 再缩放。"""
     s = 36
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([2, 7, 34, 29], radius=6, fill=(0, 0, 0, 255))
+
+    # "fn" 镂空:在字形区域把 alpha 置 0,模板渲染下即透明孔洞
     font = load_font(15)
-    d.text((18, 18), "fn", font=font, fill=(255, 255, 255, 255), anchor="mm")
+    glyph = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(glyph).text((18, 18), "fn", font=font, fill=255, anchor="mm")
+    alpha = Image.composite(Image.new("L", (s, s), 0), img.getchannel("A"), glyph)
+    img.putalpha(alpha)
+
     return img.resize((size, size), Image.LANCZOS)
 
 
