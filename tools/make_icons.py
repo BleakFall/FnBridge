@@ -5,6 +5,7 @@
 设计:深蓝紫渐变底 + 白色键帽 + "F" 字样(macOS Big Sur+ 圆角矩形规范)。
 """
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -19,14 +20,18 @@ CAP_BOTTOM = (232, 232, 240)
 GLYPH = (59, 56, 168)       # 键帽上的 "F"
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont:
+def load_font(size: int, weight: Optional[int] = None) -> ImageFont.FreeTypeFont:
     for candidate in [
         "/System/Library/Fonts/SFNS.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/System.ttf",
     ]:
         try:
-            return ImageFont.truetype(candidate, size)
+            font = ImageFont.truetype(candidate, size)
+            if weight is not None and candidate.endswith("SFNS.ttf"):
+                # SFNS 为可变字体,轴顺序 [Width, OpticalSize, GRAD, Weight];400=Regular,700=Bold
+                font.set_variation_by_axes([100, 28, 400, weight])
+            return font
         except OSError:
             continue
     raise SystemExit("找不到可用系统字体(SFNS/Helvetica)")
@@ -65,16 +70,23 @@ def draw_app_icon(size: int) -> Image.Image:
 
 
 def draw_status_icon(size: int) -> Image.Image:
-    """状态栏模板图:黑块 + "fn" 字形镂空(alpha 0),系统按 alpha 适配明暗。先画 36 再缩放。"""
-    s = 36
+    """状态栏模板图:圆角键帽 + 镂空粗体 "F"(alpha 0),系统按 alpha 适配明暗。
+
+    以 8× 母版(288px)绘制再缩到目标尺寸,超采样保证字形与圆角边缘平滑,
+    避免小字号直接栅格化产生的锯齿(旧实现 2x 图直接画 36px,几乎无抗锯齿)。
+    """
+    s = 288
+    k = s / 36.0
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([2, 7, 34, 29], radius=6, fill=(0, 0, 0, 255))
 
-    # "fn" 镂空:在字形区域把 alpha 置 0,模板渲染下即透明孔洞
-    font = load_font(15)
+    # 圆角键帽(30×30 居中),黑底——模板渲染下由系统按菜单栏明暗自动着色
+    d.rounded_rectangle([3 * k, 3 * k, 33 * k, 33 * k], radius=7 * k, fill=(0, 0, 0, 255))
+
+    # 粗体 "F" 镂空:在字形区域把 alpha 置 0,模板渲染下即透明孔洞
+    font = load_font(int(22 * k), weight=700)
     glyph = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(glyph).text((18, 18), "fn", font=font, fill=255, anchor="mm")
+    ImageDraw.Draw(glyph).text((18 * k, 18 * k), "F", font=font, fill=255, anchor="mm")
     alpha = Image.composite(Image.new("L", (s, s), 0), img.getchannel("A"), glyph)
     img.putalpha(alpha)
 
