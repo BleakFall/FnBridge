@@ -22,11 +22,11 @@ echo "==> 打包 $OUT ..."
 ditto -c -k --keepParent "$APP" "$OUT"
 
 echo
-echo "==> SHA-256(填入 Casks/fnbridge.rb 的 sha256):"
+echo "==> SHA-256(填入 homebrew-fnbridge 仓库 Casks/fnbridge.rb 的 sha256):"
 shasum -a 256 "$OUT"
 
 echo
 echo "下一步:"
 echo "  1. git tag v${VERSION} && git push origin v${VERSION}"
 echo "  2. 在 GitHub Release 上传 $OUT(文件名须与 cask url 一致)"
-echo "  3. 核对 Casks/fnbridge.rb 的 version=${VERSION} 与 sha256 已同步"
+echo "  3. 核对 homebrew-fnbridge 仓库 Casks/fnbridge.rb 的 version=${VERSION} 与 sha256 已同步"
