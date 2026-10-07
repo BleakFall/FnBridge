@@ -13,6 +13,16 @@ Turns the standard F1–F12 keycodes sent by external keyboards (e.g. HHKB Fn+nu
 
 ## 安装 | Install
 
+### Homebrew(推荐)
+
+```bash
+brew tap BleakFall/fnbridge
+brew trust BleakFall/fnbridge
+brew install --cask fnbridge
+```
+
+### 手动下载
+
 从 [Releases](../../releases) 下载最新版 `FnBridge.app`,拖进 `/Applications` 即可运行。
 
 ## 授权 | Permissions
